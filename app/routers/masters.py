@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..audit import record
 from ..db import get_db
+from ..emails_util import EmailError, describe, normalise, parse, validate
 from ..models import Item, Unit, User, Vendor
 from ..security import buyer_only, current_user
 from ..web import client_ip, redirect, render
@@ -32,12 +33,26 @@ def masters_home(request: Request, tab: str = "vendors", q: str = "",
 
 # ------------------------------------------------------------------ create
 def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Vendor:
-    name, email = name.strip(), email.strip().lower()
-    if not name or not email:
-        raise HTTPException(400, "A vendor needs a name and an email address.")
+    """Create (or reuse) a vendor. ``email`` may itself be a list of addresses -
+    the first becomes the primary and the rest join the extra contacts."""
+    name = name.strip()
+    try:
+        typed = validate(email, field="email address")
+        extras = validate(extra.pop("extra_emails", ""), field="email address")
+    except EmailError as exc:
+        raise HTTPException(400, str(exc))
+    if not name or not typed:
+        raise HTTPException(400, "A vendor needs a name and at least one email address.")
+    email, rest = typed[0], typed[1:]
+    extras = [a for a in rest + extras if a != email]
     existing = db.query(Vendor).filter(Vendor.email == email).first()
     if existing:
+        merged = [a for a in parse(existing.extra_emails) + extras
+                  if a != existing.email.lower()]
+        existing.extra_emails = "\n".join(dict.fromkeys(merged))
+        db.commit()
         return existing
+    extra["extra_emails"] = "\n".join(dict.fromkeys(extras))
     vendor = Vendor(name=name, email=email, created_by_id=user.id,
                     **{k: (v or "") for k, v in extra.items()})
     db.add(vendor)
@@ -82,12 +97,43 @@ def create_unit(db: Session, user: User, code: str, name: str = "") -> Unit:
 
 @router.post("/vendors")
 def post_vendor(request: Request, name: str = Form(...), email: str = Form(...),
-                code: str = Form(""), contact_person: str = Form(""), phone: str = Form(""),
+                extra_emails: str = Form(""), code: str = Form(""),
+                contact_person: str = Form(""), phone: str = Form(""),
                 gstin: str = Form(""), address: str = Form(""),
                 user: User = Depends(buyer_only), db: Session = Depends(get_db)):
-    vendor = create_vendor(db, user, name, email, code=code, contact_person=contact_person,
-                           phone=phone, gstin=gstin, address=address)
-    return redirect("/masters?tab=vendors", f"Vendor “{vendor.name}” saved.")
+    vendor = create_vendor(db, user, name, email, extra_emails=extra_emails, code=code,
+                           contact_person=contact_person, phone=phone, gstin=gstin,
+                           address=address)
+    count = 1 + len(parse(vendor.extra_emails))
+    return redirect("/masters?tab=vendors",
+                    f"Vendor “{vendor.name}” saved. Emails go to {count} address(es).")
+
+
+@router.post("/vendors/{vendor_id}/emails")
+def update_vendor_emails(vendor_id: int, request: Request, email: str = Form(...),
+                         extra_emails: str = Form(""), user: User = Depends(buyer_only),
+                         db: Session = Depends(get_db)):
+    """Edit exactly who at this vendor receives the platform's emails."""
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor:
+        raise HTTPException(404, "That vendor no longer exists.")
+    try:
+        primary = validate(email, field="email address")
+        extras = validate(extra_emails, field="email address")
+    except EmailError as exc:
+        return redirect("/masters?tab=vendors", str(exc), kind="error")
+    if not primary:
+        return redirect("/masters?tab=vendors",
+                        "A vendor needs at least one email address.", kind="error")
+    before = [vendor.email] + parse(vendor.extra_emails)
+    vendor.email = primary[0]
+    vendor.extra_emails = "\n".join(
+        dict.fromkeys([a for a in primary[1:] + extras if a != vendor.email]))
+    after = [vendor.email] + parse(vendor.extra_emails)
+    record(db, action="vendor.emails", entity_type="vendor", entity_id=vendor.id, actor=user,
+           ip=client_ip(request), detail={"before": before, "after": after}, commit=True)
+    return redirect("/masters?tab=vendors",
+                    f"“{vendor.name}” will now be emailed at {describe(after)}.")
 
 
 @router.post("/items")
@@ -110,9 +156,12 @@ def post_unit(request: Request, code: str = Form(...), name: str = Form(""),
 # ------------------------------------------------------------------ inline (JSON)
 @router.post("/quick/vendor")
 def quick_vendor(name: str = Form(...), email: str = Form(...), phone: str = Form(""),
-                 user: User = Depends(buyer_only), db: Session = Depends(get_db)):
-    vendor = create_vendor(db, user, name, email, phone=phone)
-    return {"id": vendor.id, "label": f"{vendor.name} — {vendor.email}"}
+                 extra_emails: str = Form(""), user: User = Depends(buyer_only),
+                 db: Session = Depends(get_db)):
+    vendor = create_vendor(db, user, name, email, phone=phone, extra_emails=extra_emails)
+    addresses = [vendor.email] + parse(vendor.extra_emails)
+    return {"id": vendor.id, "label": f"{vendor.name} — {vendor.email}",
+            "emails": ", ".join(addresses), "count": len(addresses)}
 
 
 @router.post("/quick/item")

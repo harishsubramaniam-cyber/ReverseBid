@@ -102,12 +102,16 @@
               sel.add(opt);
               if (sel.dataset.autoselect !== "0") sel.value = data.id;
             } else if (sel.tagName === "DIV") {
-              var id = "v" + data.id;
-              var label = document.createElement("label");
-              label.className = "check";
-              label.innerHTML = '<input type="checkbox" name="vendor_ids" value="' + data.id +
-                '" checked><span><span class="t">' + data.label + "</span></span>";
-              sel.prepend(label);
+              var row = document.createElement("div");
+              row.className = "vendor-row";
+              row.innerHTML =
+                '<label class="check" style="margin-bottom:0">' +
+                '<input type="checkbox" name="vendor_ids" value="' + data.id + '" checked>' +
+                '<span><span class="t">' + data.label + '</span>' +
+                '<span class="d">Emails go to ' + (data.emails || "") + '</span></span></label>' +
+                '<div class="vendor-override"><input type="text" name="notify_emails_' + data.id +
+                '" placeholder="Send this auction to a different address (optional)"></div>';
+              sel.prepend(row);
             }
           });
           form.reset();

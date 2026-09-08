@@ -67,6 +67,8 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 
 * Email plus in-app notification on every key event: invitation, opening, bid received, outbid,
   extension, closing soon, closed, awarded, not awarded, cancelled, messages, approvals.
+* You choose the recipients: several contacts per vendor, a per-auction override for one bidder,
+  and a copy list for your own team. See **Who gets the emails** below.
 * Outbid alerts that pull vendors back into the auction.
 * Fully responsive — buyers and bidders can work from a phone browser, with a bottom nav bar.
 
@@ -78,6 +80,32 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 * Withdraw a bid, edit an auction before it opens, cancel with a reason at any time.
 
 ---
+
+## Who gets the emails
+
+You control the recipients in three places, and the app always shows you exactly who will be
+written to before anything goes out.
+
+1. **On the vendor** — a vendor has a main address plus as many extra contacts as you like
+   (their sales desk, a second contact, a shared inbox). Every one of them receives the
+   invitation, the outbid alerts, the closing reminder and the award decision. Edit the list
+   from **Vendors & items → Who gets the emails**, or when you first add the vendor — including
+   from the inline “+ New vendor” box inside the auction form.
+2. **On the auction, per bidder** — when you tick a vendor on the auction form a box appears
+   underneath it. Type an address there and it replaces that vendor's usual list *for this
+   auction only*, which is what you want when a different person handles one particular tender.
+   Leave it blank and the vendor's own list is used.
+3. **Your own copy list** — the “Copy my own team on this auction” box sends your colleagues
+   (procurement head, finance) a copy when the auction is published, closed, awarded or
+   cancelled. They need no login and never see the bidding screen.
+
+Addresses can be separated by commas, semicolons or new lines, and `Name <a@b.com>` is
+understood. Anything that is not a plausible address is refused with a plain-language message
+rather than silently dropped. The **Details** tab of every auction lists the exact addresses each
+bidder will be written to, and the **Outbox** shows what was actually produced.
+
+Anyone with a login also gets the in-app alert, even when their address has been overridden for
+that auction.
 
 ## Email
 
@@ -119,6 +147,7 @@ All settings are environment variables — see `app/config.py`.
 | `RA_CURRENCY` / `RA_CURRENCY_SYMBOL` | `INR` / `₹` | Display only |
 | `RA_SMTP_*`, `RA_MAIL_FROM` | empty | See above |
 | `RA_SCHEDULER_INTERVAL` | `5` | Seconds between clock ticks |
+| `RA_MAIL_FROM_NAME` | `ReverseBid` | The name your emails appear to come from |
 | `RA_ENDING_SOON_MINUTES` | `5` | When the “closing soon” alert goes out |
 
 ---
@@ -135,6 +164,8 @@ app/
   notify.py        one function per event: in-app notification + email
   reporting.py     both reports, as HTML data, CSV and PDF
   help_content.py  every help string and the assistant's answers
+  emails_util.py   parsing and validating the address lists people type
+  migrate.py       adds any new columns to an existing database on startup
   security.py      password hashing, sessions, role guards
   audit.py         the append-only trail
   routers/         one module per area of the app
@@ -149,6 +180,8 @@ Two design notes worth knowing:
 * **The engine is pure.** `engine.py` never touches HTTP; the routers translate its
   `BidError` messages straight to the screen, which is why bidders get sentences like
   *“Too high. The current lowest bid is ₹35.23 and you must go at least ₹0.50 below it.”*
+* **New columns migrate themselves.** `migrate.py` runs on startup and adds any column the
+  model has and the database does not, so upgrading an existing installation is just a restart.
 * **The assistant is offline.** `help_content.answer()` is a keyword matcher with no
   dependencies. Replace that one function with an LLM call and nothing else changes.
 
@@ -163,8 +196,8 @@ python tests/test_end_to_end.py      # or: python -m pytest -q
 It builds a throwaway database and walks a whole auction: masters, inline create, publishing,
 the scheduler opening the auction, every bidding rule (ceiling, minimum and maximum decrement,
 not raising your own bid), visibility rules, withdrawal, messages, auto-extension, closing,
-a split award, over-award refusal, savings maths, all four report downloads, the audit trail and
-the email outbox — around sixty assertions.
+a split award, over-award refusal, savings maths, all four report downloads, the audit trail,
+the email outbox, and the three ways of choosing recipients — around seventy assertions.
 
 ---
 

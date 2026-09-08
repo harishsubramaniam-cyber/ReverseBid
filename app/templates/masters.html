@@ -23,8 +23,11 @@
     <form method="post" action="/masters/vendors">
       <div class="field"><label>Company name *</label><input name="name" required>
         <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
-      <div class="field"><label>Email *</label><input type="email" name="email" required>
+      <div class="field"><label>Main email *</label><input type="email" name="email" required>
         <p class="hint">{{ FIELD_HELP.vendor_email }}</p></div>
+      <div class="field"><label>Also email these people <span class="muted small">(optional)</span></label>
+        <textarea name="extra_emails" rows="2" placeholder="sales@vendor.com&#10;owner@vendor.com"></textarea>
+        <p class="hint">{{ FIELD_HELP.vendor_extra_emails }}</p></div>
       <div class="row">
         <div class="field"><label>Vendor code</label><input name="code"></div>
         <div class="field"><label>Contact person</label><input name="contact_person"></div>
@@ -40,10 +43,15 @@
   <div class="card">
     <div class="card-head"><h3>{{ vendors|length }} vendor(s)</h3></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>
+      <thead><tr><th>Name</th><th>Emails go to</th><th>Status</th><th></th></tr></thead><tbody>
       {% for vendor in vendors %}
+        {% set addresses = [vendor.email] + email_list(vendor.extra_emails) %}
         <tr><td><b>{{ vendor.name }}</b>{% if vendor.code %}<div class="muted small">{{ vendor.code }}</div>{% endif %}</td>
-          <td class="small">{{ vendor.email }}{% if vendor.phone %}<div class="muted">{{ vendor.phone }}</div>{% endif %}</td>
+          <td class="small">
+            {% for address in addresses %}<div>{{ address }}</div>{% endfor %}
+            <button class="linkbtn" type="button" onclick="openModal('m-emails-{{ vendor.id }}')">
+              {{ 'Who gets the emails' if addresses|length == 1 else addresses|length ~ ' recipients — edit' }}</button>
+          </td>
           <td><span class="pill {{ 'good' if vendor.is_active else 'closed' }}">{{ 'active' if vendor.is_active else 'archived' }}</span></td>
           <td><form method="post" action="/masters/vendors/{{ vendor.id }}/toggle">
             <button class="linkbtn" type="submit">{{ 'Archive' if vendor.is_active else 'Restore' }}</button></form></td></tr>
@@ -52,6 +60,22 @@
     </tbody></table></div>
   </div>
 </div>
+
+{% for vendor in vendors %}
+<div class="modal" id="m-emails-{{ vendor.id }}"><div class="panel">
+  <h3>Who gets the emails for {{ vendor.name }}?</h3>
+  <p class="muted small">Everyone listed here receives the invitation, outbid alerts, closing
+    reminders and the award decision.</p>
+  <form method="post" action="/masters/vendors/{{ vendor.id }}/emails">
+    <div class="field"><label>Main email</label>
+      <input type="email" name="email" value="{{ vendor.email }}" required></div>
+    <div class="field"><label>Also email <span class="muted small">(one per line)</span></label>
+      <textarea name="extra_emails" rows="3">{{ vendor.extra_emails }}</textarea>
+      <p class="hint">{{ FIELD_HELP.vendor_extra_emails }}</p></div>
+    <div class="btn-row"><button class="btn" type="submit">Save recipients</button>
+      <button class="btn ghost" type="button" onclick="closeModal()">Cancel</button></div>
+  </form></div></div>
+{% endfor %}
 
 {% elif tab == 'items' %}
 <div class="grid g2">

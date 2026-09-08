@@ -114,13 +114,25 @@
         <tr><td>Auto-extension</td><td class="num">{% if auction.auto_extend %}+{{ (auction.extend_by_seconds/60)|round(1) }} min, up to {{ auction.max_extensions }}×{% else %}off{% endif %}</td></tr>
       </tbody></table></div>
       {% if user.is_buyer_side %}
-      <h3 style="margin-top:14px">Invited bidders</h3>
-      <div class="table-wrap"><table><thead><tr><th>Vendor</th><th>Alias shown to others</th><th>Email</th></tr></thead><tbody>
+      <h3 style="margin-top:14px">Invited bidders — and who we email</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Vendor</th><th>Alias shown to others</th><th>Emails go to</th></tr></thead><tbody>
         {% for part in auction.participants %}
         <tr><td>{{ part.vendor.name }}</td><td class="muted">{{ aliases.get(part.vendor_id) }}</td>
-          <td class="small">{{ part.vendor.email }}</td></tr>
+          <td class="small">
+            {% for address in recipients_for(part.vendor_id) %}<div>{{ address }}</div>{% endfor %}
+            {% if part.notify_emails %}<span class="pill warn">set for this auction</span>{% endif %}
+          </td></tr>
         {% endfor %}
       </tbody></table></div>
+      <h3 style="margin-top:14px">Copied on this auction</h3>
+      {% if cc_list %}
+        <p class="small">{% for address in cc_list %}<div>{{ address }}</div>{% endfor %}
+          <span class="muted">They get a copy when it is published, closed, awarded or cancelled.</span></p>
+      {% else %}
+        <p class="muted small">Nobody on your side is copied.
+          {% if auction.editable %}<a href="/auctions/{{ auction.id }}/edit">Add someone</a>.{% endif %}</p>
+      {% endif %}
       {% endif %}
     </div>
   </div>

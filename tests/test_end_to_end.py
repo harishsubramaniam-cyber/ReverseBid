@@ -75,7 +75,8 @@ def main() -> int:
     db.flush()
     vendors, vendor_users = [], []
     for i in (1, 2, 3):
-        vendor = Vendor(name=f"Vendor {i}", email=f"v{i}@test.local")
+        vendor = Vendor(name=f"Vendor {i}", email=f"v{i}@test.local",
+                        extra_emails=f"sales{i}@test.local")
         db.add(vendor)
         db.flush()
         user = User(name=f"Bidder {i}", email=f"v{i}@test.local", role=Role.VENDOR,
@@ -112,26 +113,41 @@ def main() -> int:
         "line_item_id": str(item.id), "line_unit_id": str(unit.id),
         "line_qty": "100", "line_price": "1000", "line_spec": "",
         "vendor_ids": [str(v.id) for v in vendors],
+        "cc_emails": "finance@buyer.local, boss@buyer.local",
+        f"notify_emails_{vendors[2].id}": "tender.desk@v3.local",
     }
     r = buyer_c.post("/auctions/new", data=form, follow_redirects=False)
     check("auction created", r.status_code == 303, r.headers.get("location", ""))
     auction = db.query(Auction).order_by(Auction.id.desc()).first()
     db.refresh(auction)
     check("three bidders invited", len(auction.participants) == 3)
+    check("copy list saved", len(auction.cc_emails.split()) == 2, auction.cc_emails.replace("\n", " "))
+    override = [p for p in auction.participants if p.vendor_id == vendors[2].id][0]
+    check("per-auction address override saved",
+          override.notify_emails.strip() == "tender.desk@v3.local")
     check("baseline is qty x starting price", auction.baseline_value == 100_000)
 
     r = buyer_c.post(f"/auctions/{auction.id}/publish", follow_redirects=False)
     check("published", r.status_code == 303)
     mailer.flush()
-    check("invitation emailed to every bidder", len(emails("invited")) == 3,
-          f"{len(emails('invited'))} sent")
+    invited = emails("invited")
+    to = sorted(m.to_email for m in invited)
+    # v1 and v2: primary + their extra contact. v3: the override replaces both.
+    # Plus the two people on the buyer's copy list and the creator.
+    check("vendor's extra contact was emailed too", "sales1@test.local" in to, ", ".join(to))
+    check("per-auction override replaced the vendor's own addresses",
+          "tender.desk@v3.local" in to and "v3@test.local" not in to)
+    check("the buyer's copy list was told the auction is published",
+          "finance@buyer.local" in to and "boss@buyer.local" in to)
+    check("invitations went to every address", len(invited) == 8, f"{len(invited)} sent")
 
     print("\n4. The scheduler opens the auction")
     scheduler.tick()
     db.refresh(auction)
     check("auction went live automatically", auction.status == AuctionStatus.LIVE)
     mailer.flush()
-    check("'bidding is open' emailed", len(emails("started")) == 3)
+    check("'bidding is open' emailed to all five bidder addresses",
+          len(emails("started")) == 5, f"{len(emails('started'))} sent")
 
     print("\n5. Bidding rules")
     line = auction.lines[0]
@@ -167,8 +183,11 @@ def main() -> int:
     check("vendor 1 sits at L3", vendor_rank(db, line.id, vendors[0].id) == 3)
 
     mailer.flush()
+    outbid_to = {m.to_email for m in emails("outbid")}
     check("outbid alerts were emailed", len(emails("outbid")) >= 2,
           f"{len(emails('outbid'))} sent")
+    check("outbid alert reached the vendor's second contact",
+          "sales1@test.local" in outbid_to, ", ".join(sorted(outbid_to)))
     check("bid confirmations were emailed", len(emails("bid_received")) == 3)
 
     print("\n6. Visibility rules")
@@ -207,7 +226,9 @@ def main() -> int:
     db.refresh(auction)
     check("auction closed", auction.status == AuctionStatus.CLOSED)
     mailer.flush()
+    closed_to = {m.to_email for m in emails("closed")}
     check("closure emailed", len(emails("closed")) >= 4)
+    check("copy list told when bidding closed", "finance@buyer.local" in closed_to)
 
     check("award screen loads", buyer_c.get(f"/auctions/{auction.id}/award").status_code == 200)
     # split the line: 60 to the L1 bidder, 40 to the runner-up
@@ -233,8 +254,28 @@ def main() -> int:
     check("over-awarding is refused", r.status_code == 400)
 
     mailer.flush()
-    check("winners emailed", len(emails("awarded")) == 2)
-    check("the bidder who lost was emailed too", len(emails("not_awarded")) == 1)
+    awarded_to = {m.to_email for m in emails("awarded")}
+    check("winners emailed at every one of their addresses", len(awarded_to) >= 4,
+          ", ".join(sorted(awarded_to)))
+    check("copy list got the award summary", "boss@buyer.local" in awarded_to)
+    check("the bidder who lost was emailed too", len(emails("not_awarded")) >= 1)
+
+    print("\n8b. Editing the recipients afterwards")
+    r = buyer_c.post(f"/masters/vendors/{vendors[0].id}/emails", follow_redirects=False,
+                     data={"email": "v1@test.local",
+                           "extra_emails": "sales1@test.local\nowner1@test.local"})
+    check("vendor recipient list can be edited", r.status_code == 303)
+    db.expire_all()
+    from app.notify import vendor_recipients
+    addresses = {r.email for r in vendor_recipients(db, vendors[0].id) if r.email}
+    check("all three addresses now on the vendor",
+          addresses == {"v1@test.local", "sales1@test.local", "owner1@test.local"},
+          ", ".join(sorted(addresses)))
+    r = buyer_c.post(f"/masters/vendors/{vendors[0].id}/emails", follow_redirects=False,
+                     data={"email": "v1@test.local", "extra_emails": "not-an-email"})
+    db.expire_all()
+    still = {r.email for r in vendor_recipients(db, vendors[0].id) if r.email}
+    check("a typo in an address is refused, list unchanged", still == addresses)
 
     print("\n9. Savings and reports")
     from app.engine import auction_summary

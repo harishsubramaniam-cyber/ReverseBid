@@ -88,6 +88,9 @@ class Vendor(Base):
     code = Column(String(50), default="")
     contact_person = Column(String(200), default="")
     phone = Column(String(40), default="")
+    #: Extra people at this vendor who should also get every email, one per
+    #: line or comma separated. The primary ``email`` always receives too.
+    extra_emails = Column(Text, default="")
     address = Column(Text, default="")
     gstin = Column(String(40), default="")
     is_active = Column(Boolean, default=True)
@@ -154,6 +157,9 @@ class Auction(Base):
     extensions_used = Column(Integer, default=0)
 
     requires_approval = Column(Boolean, default=False)
+    #: The buyer's own people who get a copy of the buyer-side events
+    #: (published, closed, awarded, cancelled). No login needed.
+    cc_emails = Column(Text, default="")
 
     # --- lifecycle bookkeeping
     published_at = Column(DateTime)
@@ -215,6 +221,8 @@ class Participant(Base):
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
     invited_at = Column(DateTime, default=utcnow)
     alias = Column(String(30), default="")   # "Bidder A" when names are hidden
+    #: Addresses to use for THIS auction only. Blank = the vendor's usual list.
+    notify_emails = Column(Text, default="")
 
     auction = relationship("Auction", back_populates="participants")
     vendor = relationship("Vendor")

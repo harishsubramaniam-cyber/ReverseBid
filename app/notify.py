@@ -5,14 +5,16 @@ bodies themselves.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
 from . import config
+from .emails_util import parse as parse_emails
 from .mailer import queue_email
-from .models import Auction, Notification, Role, User, Vendor
+from .models import Auction, Notification, Participant, Role, User, Vendor
 from .utils import fmt_dt, fmt_money
 
 _env = Environment(
@@ -29,15 +31,85 @@ ACCENTS = {
 
 
 # ------------------------------------------------------------------ recipients
+@dataclass
+class Recipient:
+    """Someone to tell about an event.
+
+    ``email`` may be blank for a person who only gets the in-app alert (their
+    address is already covered by an override), and ``user_id`` may be ``None``
+    for a plain address with no login - a vendor's second contact, or one of
+    the buyer's own colleagues on the copy list.
+    """
+    name: str
+    email: str = ""
+    user_id: int | None = None
+
+    @property
+    def key(self) -> str:
+        return self.email.lower() or f"user-{self.user_id}"
+
+
+def _from_user(user: User) -> Recipient:
+    return Recipient(name=user.name, email=user.email, user_id=user.id)
+
+
+def _name_from_email(address: str) -> str:
+    """A friendly-enough greeting for an address with no account behind it."""
+    local = address.split("@")[0]
+    return local.replace(".", " ").replace("_", " ").title() or "there"
+
+
 def vendor_users(db: Session, vendor_id: int) -> list[User]:
     return db.query(User).filter(User.vendor_id == vendor_id, User.is_active.is_(True)).all()
 
 
-def participant_users(db: Session, auction: Auction) -> list[User]:
-    users: list[User] = []
+def vendor_recipients(db: Session, vendor_id: int,
+                      auction: Auction | None = None) -> list[Recipient]:
+    """Everyone who should hear about this auction on behalf of one vendor.
+
+    Precedence: an address list typed against this auction's invitation wins;
+    otherwise the vendor's own list (primary email plus any extra contacts).
+    Users with logins always keep their in-app alert either way.
+    """
+    override: list[str] = []
+    if auction is not None:
+        part = (db.query(Participant)
+                  .filter_by(auction_id=auction.id, vendor_id=vendor_id).first())
+        if part and part.notify_emails:
+            override = parse_emails(part.notify_emails)
+
+    addresses = override
+    if not addresses:
+        vendor = db.get(Vendor, vendor_id)
+        addresses = ([vendor.email.lower()] if vendor and vendor.email else [])
+        if vendor:
+            addresses += [a for a in parse_emails(vendor.extra_emails) if a not in addresses]
+
+    out: dict[str, Recipient] = {}
+    for address in addresses:
+        out[address] = Recipient(name=_name_from_email(address), email=address)
+    for user in vendor_users(db, vendor_id):
+        key = user.email.lower()
+        if key in out or not override:
+            out[key] = _from_user(user)          # a real name beats a guessed one
+        else:
+            # Their address was replaced for this auction - keep the in-app alert.
+            out[f"user-{user.id}"] = Recipient(name=user.name, user_id=user.id)
+    return list(out.values())
+
+
+def participant_users(db: Session, auction: Auction) -> list[Recipient]:
+    """Every bidder contact on an auction, across all invited vendors."""
+    out: list[Recipient] = []
     for part in auction.participants:
-        users.extend(vendor_users(db, part.vendor_id))
-    return users
+        out.extend(vendor_recipients(db, part.vendor_id, auction))
+    return out
+
+
+def cc_recipients(db: Session, auction: Auction) -> list[Recipient]:
+    """The buyer's own copy list for this auction - no login required."""
+    return [Recipient(name=_name_from_email(a), email=a)
+            for a in parse_emails(auction.cc_emails)]
 
 
 def approvers(db: Session) -> list[User]:
@@ -46,30 +118,38 @@ def approvers(db: Session) -> list[User]:
 
 
 # ------------------------------------------------------------------ core send
-def send(db: Session, users: Iterable[User], *, event: str, title: str,
+def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: str,
          paragraphs: Sequence[str], facts: Sequence[tuple[str, str]] = (),
          cta_text: str = "", link: str = "", note: str = "",
          auction: Auction | None = None, in_app: bool = True) -> int:
     """Deliver one event to many users. Returns the number of emails queued."""
     template = _env.get_template("emails/base.html")
     count = 0
-    seen: set[int] = set()
-    for user in users:
-        if not user or user.id in seen or not user.is_active:
+    seen: set[str] = set()
+    for entry in users:
+        if entry is None:
             continue
-        seen.add(user.id)
-        if in_app:
-            db.add(Notification(user_id=user.id, event=event, title=title,
+        person = entry if isinstance(entry, Recipient) else _from_user(entry)
+        if isinstance(entry, User) and not entry.is_active:
+            continue
+        if person.key in seen:
+            continue
+        seen.add(person.key)
+        if in_app and person.user_id:
+            db.add(Notification(user_id=person.user_id, event=event, title=title,
                                 body=" ".join(_strip(p) for p in paragraphs)[:800],
                                 link=link))
+        if not person.email:
+            continue
         html = template.render(
-            app_name=config.APP_NAME, title=title, greeting=user.name.split()[0],
+            app_name=config.APP_NAME, title=title,
+            greeting=(person.name.split()[0] if person.name else "there"),
             paragraphs=paragraphs, facts=facts, accent=ACCENTS.get(event, "#1d4ed8"),
             cta_text=cta_text or "Open in the app",
             cta_url=(config.BASE_URL + link) if link else "",
             note=note,
         )
-        queue_email(db, to_email=user.email, to_name=user.name, subject=title,
+        queue_email(db, to_email=person.email, to_name=person.name, subject=title,
                     html_body=html, event=event,
                     auction_id=auction.id if auction else None)
         count += 1
@@ -93,6 +173,38 @@ def _auction_facts(auction: Auction) -> list[tuple[str, str]]:
 
 
 # ------------------------------------------------------------------ events
+def buyer_update(db: Session, auction: Auction, *, title: str, paragraphs: Sequence[str],
+                 facts: Sequence[tuple[str, str]] = (), event: str = "closed",
+                 cta_text: str = "Open the auction") -> int:
+    """A copy of a buyer-side milestone for the creator and the copy list."""
+    people = [auction.creator] + cc_recipients(db, auction)
+    return send(db, people, event=event, auction=auction, title=title,
+                paragraphs=paragraphs, facts=facts, cta_text=cta_text,
+                link=f"/auctions/{auction.id}",
+                note="You are receiving this because you are on the copy list for this auction.")
+
+
+def auction_published(db: Session, auction: Auction, invited: int) -> int:
+    return buyer_update(
+        db, auction, event="invited",
+        title=f"Auction published: {auction.title}",
+        paragraphs=[f"The auction is live on the calendar and <b>{invited}</b> bidder contact(s) "
+                    "have been invited by email."],
+        facts=_auction_facts(auction), cta_text="Watch the bidding")
+
+
+def award_summary(db: Session, auction: Auction, rows: Sequence[tuple[str, str, str]],
+                  total: float, savings: float, savings_pct: float) -> int:
+    facts = [(item, f"{who} — {value}") for item, who, value in rows]
+    facts += [("Awarded value", fmt_money(total)),
+              ("Savings", f"{fmt_money(savings)} ({savings_pct:.1f}%)")]
+    return buyer_update(
+        db, auction, event="awarded",
+        title=f"Awarded: {auction.title}",
+        paragraphs=["The auction has been awarded and every bidder has been told the outcome."],
+        facts=facts, cta_text="See the award")
+
+
 def auction_invited(db: Session, auction: Auction) -> int:
     return send(
         db, participant_users(db, auction), event="invited", auction=auction,
@@ -140,7 +252,7 @@ def bid_received(db: Session, auction: Auction, user: User, line_label: str,
 
 def outbid(db: Session, auction: Auction, vendor: Vendor, line_label: str,
            new_best: float, your_price: float) -> int:
-    return send(db, vendor_users(db, vendor.id), event="outbid", auction=auction,
+    return send(db, vendor_recipients(db, vendor.id, auction), event="outbid", auction=auction,
                 title=f"You have been outbid: {auction.title}",
                 paragraphs=[
                     f"Someone has gone below your price on <b>{line_label}</b>. "
@@ -174,7 +286,8 @@ def ending_soon(db: Session, auction: Auction) -> int:
 
 
 def auction_closed(db: Session, auction: Auction) -> int:
-    return send(db, participant_users(db, auction) + [auction.creator],
+    return send(db, participant_users(db, auction) + [auction.creator]
+                + cc_recipients(db, auction),
                 event="closed", auction=auction,
                 title=f"Bidding closed: {auction.title}",
                 paragraphs=["Bidding is now closed. The buyer will review the bids and award "
@@ -187,7 +300,7 @@ def awarded(db: Session, auction: Auction, vendor: Vendor, rows: list[tuple[str,
             total: float) -> int:
     facts = [(f"{item}", f"{qty} @ {price}") for item, qty, price in rows]
     facts.append(("Total awarded", fmt_money(total)))
-    return send(db, vendor_users(db, vendor.id), event="awarded", auction=auction,
+    return send(db, vendor_recipients(db, vendor.id, auction), event="awarded", auction=auction,
                 title=f"Congratulations — you have been awarded: {auction.title}",
                 paragraphs=["The buyer has awarded you the following items from this auction. "
                             "The buyer will be in touch with next steps."],
@@ -195,7 +308,7 @@ def awarded(db: Session, auction: Auction, vendor: Vendor, rows: list[tuple[str,
 
 
 def not_awarded(db: Session, auction: Auction, vendor: Vendor) -> int:
-    return send(db, vendor_users(db, vendor.id), event="not_awarded", auction=auction,
+    return send(db, vendor_recipients(db, vendor.id, auction), event="not_awarded", auction=auction,
                 title=f"Outcome: {auction.title}",
                 paragraphs=["Thank you for taking part. On this occasion the business was "
                             "awarded elsewhere. We hope to see you in the next auction."],
@@ -203,7 +316,9 @@ def not_awarded(db: Session, auction: Auction, vendor: Vendor) -> int:
 
 
 def auction_cancelled(db: Session, auction: Auction, reason: str) -> int:
-    return send(db, participant_users(db, auction), event="cancelled", auction=auction,
+    return send(db, participant_users(db, auction) + [auction.creator]
+                + cc_recipients(db, auction),
+                event="cancelled", auction=auction,
                 title=f"Auction cancelled: {auction.title}",
                 paragraphs=["The buyer has cancelled this auction. No award will be made.",
                             f"Reason given: <i>{reason or 'not stated'}</i>"],

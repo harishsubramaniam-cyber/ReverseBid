@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, scheduler
+from . import config, migrate, scheduler
 from .db import Base, engine
 from .routers import (approvals, assistant, auctions, auth, awards, bidding, dashboard,
                       masters, messages, notifications, reports)
@@ -18,6 +18,9 @@ from .web import render
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    added = migrate.run()
+    if added:
+        print("Database updated with new columns:", ", ".join(added))
     task = asyncio.create_task(scheduler.run_forever())
     yield
     task.cancel()

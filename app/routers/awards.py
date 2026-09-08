@@ -114,6 +114,14 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
         if part.vendor_id not in by_vendor:
             notify.not_awarded(db, auction, part.vendor)
 
+    # ... and a summary for the buyer's own copy list.
+    notify.award_summary(
+        db, auction,
+        [(engine.line_label(a.line), a.vendor.name,
+          f"{fmt_qty(a.qty)} @ {fmt_money(a.unit_price)}") for a in created],
+        total=sum(a.total for a in created), savings=summary["savings"],
+        savings_pct=summary["savings_pct"])
+
     return redirect(f"/auctions/{auction.id}?tab=award",
                     f"Awarded. Savings of {fmt_money(summary['savings'])} "
                     f"({summary['savings_pct']:.1f}%). All bidders have been emailed.")

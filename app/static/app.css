@@ -117,6 +117,14 @@ textarea{min-height:78px;resize:vertical}
 .check .d{display:block;font-size:.8rem;color:var(--ink-3);margin-top:2px}
 .check:has(input:checked){border-color:var(--brand);background:var(--brand-soft)}
 
+.vendor-row{border:1px solid var(--line);border-radius:var(--radius-sm);margin-bottom:8px;background:#fff}
+.vendor-row .check{border:none;background:none;margin:0}
+.vendor-row:has(input[type=checkbox]:checked){border-color:var(--brand);background:var(--brand-soft)}
+.vendor-row:has(input[type=checkbox]:checked) .check{background:transparent}
+.vendor-override{display:none;padding:0 10px 10px 35px}
+.vendor-row:has(input[type=checkbox]:checked) .vendor-override{display:block}
+.vendor-override input{font-size:.85rem;padding:6px 9px}
+
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 16px;
   border-radius:var(--radius-sm);border:1px solid transparent;background:var(--brand);color:#fff;
   font-weight:650;font-size:.92rem;cursor:pointer;font-family:inherit;white-space:nowrap}

@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from . import config
+from .emails_util import describe as email_describe, parse as email_list
 from .help_content import FIELD_HELP, PAGE_HELP
 from .models import Notification, User
 from .utils import (TZ_NAME, epoch, fmt_dt, fmt_money, fmt_qty, humanize_seconds, pct,
@@ -22,6 +23,7 @@ templates.env.globals.update(
     fmt_money=fmt_money, fmt_dt=fmt_dt, fmt_qty=fmt_qty, pct=pct,
     to_local=to_local, to_local_string=to_local_string, humanize=humanize_seconds, epoch=epoch,
     FIELD_HELP=FIELD_HELP, PAGE_HELP=PAGE_HELP, email_enabled=config.EMAIL_ENABLED,
+    email_list=email_list, email_describe=email_describe,
 )
 templates.env.filters["money"] = fmt_money
 

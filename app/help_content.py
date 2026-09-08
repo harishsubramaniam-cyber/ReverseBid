@@ -33,7 +33,14 @@ FIELD_HELP = {
     "qty": "How many units you are buying. Price × quantity gives the line total.",
     "vendors": "The bidders you are inviting. Only these companies can see and bid on the auction.",
     "vendor_name": "The company name. This is all we really need.",
-    "vendor_email": "Where invitations and alerts go. Use one the vendor actually reads.",
+    "vendor_email": "The main address for this vendor. Invitations and alerts go here.",
+    "vendor_extra_emails": "Anyone else at this vendor who should get the same emails — their "
+                           "sales desk, a second contact, a shared inbox. One per line, or "
+                           "separated by commas.",
+    "notify_emails": "Sending this particular auction to someone else at this vendor? Type their "
+                     "address here. Leave it blank and we use the vendor's usual list.",
+    "cc_emails": "Your own colleagues who should get a copy when this auction is published, "
+                 "closed, awarded or cancelled. They do not need a login.",
     "item_name": "What you are buying, in everyday words.",
     "unit_code": "A short unit like KG, NOS, MTR, LTR.",
     "bid_price": "Your price per unit. Lower wins — you can bid again as many times as you like.",
@@ -67,6 +74,10 @@ PAGE_HELP = {
              "nobody can bid."),
             ("Do I have to invite vendors?",
              "Yes. Only invited vendors can see the auction, and each gets an email when you publish."),
+            ("Can I choose exactly who gets the emails?",
+             "Yes, in three places. Each vendor can have several addresses on their record; you "
+             "can type a different address against a vendor for this auction only; and you can "
+             "copy your own colleagues on the box at the bottom of the form."),
         ],
     },
     "auction_detail_buyer": {
@@ -115,6 +126,10 @@ PAGE_HELP = {
             ("Do I need to fill everything in?",
              "No. A vendor needs a name and an email. An item needs a name. A unit needs a code. "
              "That's it."),
+            ("Can one vendor have several email addresses?",
+             "Yes. Add as many as you like under the vendor — every one of them receives the "
+             "invitation, the outbid alerts and the award decision. Use the “Who gets the "
+             "emails” link on any vendor to change the list later."),
         ],
     },
     "approvals": {
@@ -193,6 +208,13 @@ ANSWERS = [
     (["audit", "history", "who did what", "trail"],
      "Every action is written to an audit trail you cannot edit: who did it, what changed and "
      "exactly when. Open the **History** tab on any auction."),
+    (["email address", "recipient", "who gets", "send emails to", "cc", "copy", "second contact",
+      "another email", "multiple email"],
+     "You control the recipients in three places. **On the vendor** — add as many addresses as "
+     "you like and all of them receive every email. **On the auction** — type an address against "
+     "a bidder when you invite them, and that overrides their usual list for that auction only. "
+     "**Copy list** — at the bottom of the auction form, add your own colleagues to be copied "
+     "when the auction is published, closed, awarded or cancelled. They need no login."),
     (["vendor", "supplier", "add", "master", "item", "unit"],
      "Vendors need only a name and an email; items need a name; units need a short code like KG. "
      "You can add all three without leaving the auction form — look for the **+ New** link next "

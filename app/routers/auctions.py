@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import audit, engine, notify
 from ..audit import record
 from ..db import get_db
+from ..emails_util import EmailError, describe, normalise, parse as parse_emails, validate
 from ..models import (Approval, ApprovalStatus, Auction, AuctionLine, AuctionStatus, Award, Bid,
                       DecrementType, Item, Message, Participant, Unit, User, Vendor)
 from ..security import buyer_only, current_user
@@ -116,7 +117,7 @@ def new_auction(request: Request, user: User = Depends(buyer_only),
                 db: Session = Depends(get_db)):
     start = datetime.utcnow() + timedelta(hours=1)
     context = form_context(db)
-    context.update({"auction": None, "default_start": start,
+    context.update({"auction": None, "default_start": start, "overrides": {},
                     "default_end": start + timedelta(hours=2), "lines": []})
     return render(request, "auction_form.html", context, user=user, db=db,
                   help_key="auction_new")
@@ -137,7 +138,7 @@ async def create_auction(request: Request, user: User = Depends(buyer_only),
     db.flush()
     for row in lines:
         db.add(AuctionLine(auction_id=auction.id, **row))
-    _sync_participants(db, auction, form.getlist("vendor_ids"))
+    _sync_participants(db, auction, form)
     record(db, action="auction.create", entity_type="auction", entity_id=auction.id, actor=user,
            auction_id=auction.id, ip=client_ip(request),
            detail={"title": auction.title, "lines": len(lines)})
@@ -165,20 +166,39 @@ def _apply_settings(auction: Auction, form) -> None:
     auction.extend_by_seconds = int(float(form.get("extend_by_minutes") or 3) * 60)
     auction.max_extensions = int(form.get("max_extensions") or 0)
     auction.requires_approval = form.get("requires_approval") == "on"
+    try:
+        auction.cc_emails = "\n".join(validate(form.get("cc_emails", ""),
+                                               field="email address"))
+    except EmailError as exc:
+        raise HTTPException(400, str(exc))
 
 
-def _sync_participants(db: Session, auction: Auction, vendor_ids) -> None:
-    wanted = {int(v) for v in vendor_ids if v}
+def _participants(db: Session, auction: Auction) -> list[Participant]:
+    return (db.query(Participant).filter(Participant.auction_id == auction.id)
+              .order_by(Participant.id).all())
+
+
+def _sync_participants(db: Session, auction: Auction, form) -> None:
+    """Invite the ticked vendors, and record any per-auction address override."""
+    wanted = {int(v) for v in form.getlist("vendor_ids") if v}
     if not wanted:
         raise HTTPException(400, "Invite at least one vendor — only invited vendors can bid.")
-    existing = {p.vendor_id: p for p in auction.participants}
+    existing = {p.vendor_id: p for p in _participants(db, auction)}
     for vendor_id in wanted - set(existing):
         db.add(Participant(auction_id=auction.id, vendor_id=vendor_id))
     for vendor_id in set(existing) - wanted:
         db.delete(existing[vendor_id])
     db.flush()
-    for index, part in enumerate(sorted(auction.participants, key=lambda p: p.id)):
+    # Read back from the database: on a brand-new auction the in-memory
+    # ``auction.participants`` collection is still empty at this point.
+    for index, part in enumerate(_participants(db, auction)):
         part.alias = alias_for(index)
+        typed = form.get(f"notify_emails_{part.vendor_id}", "")
+        try:
+            part.notify_emails = "\n".join(validate(typed, field="email address"))
+        except EmailError as exc:
+            vendor = db.get(Vendor, part.vendor_id)
+            raise HTTPException(400, f"{exc} (against {vendor.name if vendor else 'a bidder'})")
 
 
 # ------------------------------------------------------------------ edit
@@ -193,7 +213,8 @@ def edit_auction(auction_id: int, request: Request, user: User = Depends(buyer_o
                                  "You can still cancel it.")
     context = form_context(db)
     context.update({"auction": auction, "lines": auction.lines,
-                    "selected_vendors": [p.vendor_id for p in auction.participants]})
+                    "selected_vendors": [p.vendor_id for p in auction.participants],
+                    "overrides": {p.vendor_id: p.notify_emails for p in auction.participants}})
     return render(request, "auction_form.html", context, user=user, db=db,
                   help_key="auction_new")
 
@@ -217,7 +238,7 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
     db.flush()
     for row in rows:
         db.add(AuctionLine(auction_id=auction.id, **row))
-    _sync_participants(db, auction, form.getlist("vendor_ids"))
+    _sync_participants(db, auction, form)
     record(db, action="auction.update", entity_type="auction", entity_id=auction.id, actor=user,
            auction_id=auction.id, ip=client_ip(request),
            detail={"before": before, "after": {"title": auction.title,
@@ -256,8 +277,10 @@ def publish(auction_id: int, request: Request, user: User = Depends(buyer_only),
            detail={"vendors": len(auction.participants)})
     db.commit()
     sent = notify.auction_invited(db, auction)
+    copied = notify.auction_published(db, auction, sent)
+    extra = f" A copy went to {copied} person(s) on your side." if copied > 1 else ""
     return redirect(f"/auctions/{auction.id}",
-                    f"Published. Invitations emailed to {sent} bidder contact(s).")
+                    f"Published. Invitations emailed to {sent} bidder contact(s).{extra}")
 
 
 @router.post("/{auction_id}/cancel")
@@ -334,6 +357,10 @@ def build_detail_context(db: Session, auction: Auction, user: User) -> dict:
         "vendor_by_id": {p.vendor_id: p.vendor for p in auction.participants},
         "awards": awards,
         "awards_by_line": _group_awards(awards),
+        "recipients_for": lambda vendor_id: [r.email for r in
+                                             notify.vendor_recipients(db, vendor_id, auction)
+                                             if r.email],
+        "cc_list": parse_emails(auction.cc_emails),
         "my_bids": (db.query(Bid).filter(Bid.auction_id == auction.id,
                                          Bid.vendor_id == user.vendor_id)
                       .order_by(Bid.created_at.desc()).all() if user.is_vendor else []),

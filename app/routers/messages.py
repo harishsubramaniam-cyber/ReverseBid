@@ -35,7 +35,7 @@ def post_message(auction_id: int, request: Request, body: str = Form(...),
     else:
         if not vendor_id:
             raise HTTPException(400, "Choose which bidder you are replying to.")
-        recipients = notify.vendor_users(db, vendor_id)
+        recipients = notify.vendor_recipients(db, vendor_id, auction)
 
     message = Message(auction_id=auction.id, vendor_id=vendor_id, sender_id=user.id, body=body)
     db.add(message)

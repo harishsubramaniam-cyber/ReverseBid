@@ -8,6 +8,7 @@ Sign in with any of the accounts printed at the end (password: demo1234).
 from __future__ import annotations
 
 import argparse
+import pathlib
 import random
 from datetime import datetime, timedelta
 
@@ -24,6 +25,16 @@ random.seed(7)
 
 
 def reset() -> None:
+    """Start from nothing. For SQLite we remove the file - dropping the tables
+    trips over the mutual users <-> vendors foreign keys."""
+    url = str(engine.url)
+    if url.startswith("sqlite") and engine.url.database:
+        engine.dispose()
+        for suffix in ("", "-wal", "-shm"):
+            path = pathlib.Path(engine.url.database + suffix)
+            if path.exists():
+                path.unlink()
+        return
     Base.metadata.drop_all(bind=engine)
 
 
@@ -43,15 +54,19 @@ def build() -> None:
     db.add_all([buyer, approver])
     db.flush()
 
+    #  name, login email, contact person, extra people who also get every email
     vendor_specs = [
-        ("Sunrise Packaging Pvt Ltd", "vendor1@demo.in", "Ravi Menon"),
-        ("Deccan Industrial Supplies", "vendor2@demo.in", "Farah Sheikh"),
-        ("Nagpur Metal Works", "vendor3@demo.in", "Vikram Joshi"),
-        ("Coastal Logistics & Trading", "vendor4@demo.in", "Meera Nair"),
+        ("Sunrise Packaging Pvt Ltd", "vendor1@demo.in", "Ravi Menon",
+         "sales@sunrisepack.example\nowner@sunrisepack.example"),
+        ("Deccan Industrial Supplies", "vendor2@demo.in", "Farah Sheikh",
+         "tenders@deccanind.example"),
+        ("Nagpur Metal Works", "vendor3@demo.in", "Vikram Joshi", ""),
+        ("Coastal Logistics & Trading", "vendor4@demo.in", "Meera Nair",
+         "bids@coastal.example"),
     ]
     vendors, vendor_users = [], []
-    for name, email, contact in vendor_specs:
-        vendor = Vendor(name=name, email=email, contact_person=contact,
+    for name, email, contact, extra in vendor_specs:
+        vendor = Vendor(name=name, email=email, contact_person=contact, extra_emails=extra,
                         code=name.split()[0][:4].upper(), created_by_id=buyer.id)
         db.add(vendor)
         db.flush()
@@ -93,8 +108,10 @@ def build() -> None:
 
     def make_auction(title, status, start, end, line_specs, **kwargs) -> Auction:
         counter["n"] += 1
+        overrides = kwargs.pop("overrides", {})
         auction = Auction(
             reference=f"RA-{start.year}-{counter['n']:04d}", title=title,
+            cc_emails=kwargs.pop("cc_emails", ""),
             description=kwargs.pop("description", ""), creator_id=buyer.id, status=status,
             start_at=start, end_at=end, original_end_at=end,
             decrement_type=DecrementType.ABSOLUTE,
@@ -110,7 +127,8 @@ def build() -> None:
                                qty=qty, starting_price=price))
         for index, vendor in enumerate(vendors):
             db.add(Participant(auction_id=auction.id, vendor_id=vendor.id,
-                               alias=alias_for(index)))
+                               alias=alias_for(index),
+                               notify_emails=overrides.get(vendor.id, "")))
         db.flush()
         return auction
 
@@ -178,7 +196,9 @@ def build() -> None:
                         AuctionStatus.LIVE, now - timedelta(minutes=25),
                         now + timedelta(hours=3), [items[0], items[1]],
                         description="Bidding is open. Lowest price per unit wins.",
-                        min_decrement=0.5)
+                        min_decrement=0.5,
+                        cc_emails="procurement.head@demo.in\nfinance@demo.in",
+                        overrides={vendors[2].id: "tender.desk@nagpurmetal.example"})
     live.started_at = now - timedelta(minutes=25)
     simulate(live, rounds=2)
 
@@ -211,7 +231,7 @@ def build() -> None:
     print("\nDemo data ready.\n")
     print(f"  Buyer      buyer@demo.in      / {PASSWORD}")
     print(f"  Approver   approver@demo.in   / {PASSWORD}")
-    for _, email, contact in vendor_specs:
+    for _, email, contact, _extra in vendor_specs:
         print(f"  Bidder     {email:<18} / {PASSWORD}   ({contact})")
     print(f"\nDatabase: {config.DATABASE_URL}\nNow run:  uvicorn app.main:app --reload\n")
 

@@ -85,13 +85,33 @@
   <div class="card-head"><span class="li-num">3</span><h2>Who is invited?</h2><span class="spacer"></span>
     <button type="button" class="linkbtn" onclick="openModal('m-vendor')">+ New vendor</button></div>
   <p class="hint" style="margin-bottom:10px">{{ FIELD_HELP.vendors }}</p>
-  <div id="vendor-list" style="max-height:320px;overflow-y:auto">
+  <div id="vendor-list" style="max-height:420px;overflow-y:auto">
     {% for vendor in vendors %}
-    <label class="check"><input type="checkbox" name="vendor_ids" value="{{ vendor.id }}"
-      {{ 'checked' if selected_vendors and vendor.id in selected_vendors }}>
-      <span><span class="t">{{ vendor.name }}</span><span class="d">{{ vendor.email }}</span></span></label>
+    {% set addresses = [vendor.email] + email_list(vendor.extra_emails) %}
+    <div class="vendor-row">
+      <label class="check" style="margin-bottom:0">
+        <input type="checkbox" name="vendor_ids" value="{{ vendor.id }}"
+          {{ 'checked' if selected_vendors and vendor.id in selected_vendors }}>
+        <span><span class="t">{{ vendor.name }}</span>
+          <span class="d">Emails go to {{ email_describe(addresses) }}</span></span>
+      </label>
+      <div class="vendor-override">
+        <input type="text" name="notify_emails_{{ vendor.id }}"
+               value="{{ overrides.get(vendor.id, '') | replace('\n', ', ') }}"
+               placeholder="Send this auction to a different address (optional)">
+      </div>
+    </div>
     {% endfor %}
     {% if not vendors %}<div class="empty small">No vendors yet — add one with the link above.</div>{% endif %}
+  </div>
+  <p class="hint">{{ FIELD_HELP.notify_emails }}</p>
+
+  <div class="field" style="margin-top:16px">
+    <label for="cc_emails">Copy my own team on this auction <span class="muted small">(optional)</span></label>
+    <input id="cc_emails" type="text" name="cc_emails"
+           value="{{ auction.cc_emails | replace('\n', ', ') if auction else '' }}"
+           placeholder="head.procurement@yourcompany.com, finance@yourcompany.com">
+    <p class="hint">{{ FIELD_HELP.cc_emails }}</p>
   </div>
 </div>
 
@@ -166,8 +186,11 @@
   <form data-quick action="/masters/quick/vendor" data-target="#vendor-list">
     <div class="field"><label>Company name</label><input name="name" required>
       <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
-    <div class="field"><label>Email</label><input type="email" name="email" required>
+    <div class="field"><label>Main email</label><input type="email" name="email" required>
       <p class="hint">{{ FIELD_HELP.vendor_email }}</p></div>
+    <div class="field"><label>Also email <span class="muted small">(optional, one per line)</span></label>
+      <textarea name="extra_emails" rows="2" placeholder="sales@vendor.com"></textarea>
+      <p class="hint">{{ FIELD_HELP.vendor_extra_emails }}</p></div>
     <div class="field"><label>Phone <span class="muted small">(optional)</span></label><input name="phone"></div>
     <div class="btn-row"><button class="btn" type="submit">Save and select</button>
       <button class="btn ghost" type="button" onclick="closeModal()">Cancel</button></div>
