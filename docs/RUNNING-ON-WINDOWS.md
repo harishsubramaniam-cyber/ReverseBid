@@ -30,14 +30,24 @@ Python is the language the app is written in. Your PC almost certainly does not 
 
 1. Find `reversebid.zip` (probably in your **Downloads** folder).
 2. **Right-click** it → **Extract All…**
-3. Change the box that appears to `C:\ReverseBid` and click **Extract**.
-4. Open `C:\ReverseBid`. Inside is a folder called **`ra`** — that is the app. Open it.
+3. A box appears asking where to put it. Delete what is in it and type exactly `C:\` — just those
+   three characters.
+4. Click **Extract**.
+5. Open **This PC → Local Disk (C:) → ReverseBid**.
 
-You should see files including `windows-setup.bat`, `windows-start.bat`, `README.md` and a
-folder called `app`.
+That folder is the app. You should see, directly inside it:
 
-> Keep it somewhere simple like `C:\ReverseBid`. Avoid OneDrive or Desktop folders with long
-> names — they occasionally cause odd errors.
+```
+C:\ReverseBid\
+    START HERE.txt
+    windows-setup.bat      <- you double-click this once, in Step 3
+    windows-start.bat      <- you double-click this every time after
+    README.md
+    app\   docs\   tests\
+```
+
+> **Cannot see those files?** You are almost certainly looking at the wrong folder. The right one
+> has `README.md` sitting in it. If you see a single folder and nothing else, open that folder.
 
 ---
 
@@ -110,7 +120,7 @@ can place a bid there and watch it appear in the buyer's window a few seconds la
 * **To start again tomorrow:** double-click `windows-start.bat`. That is all — you never need to
   run the setup again.
 
-Everything you do is saved in `C:\ReverseBid\ra\data\`. It is still there next time.
+Everything you do is saved in `C:\ReverseBid\data\`. It is still there next time.
 
 ---
 
@@ -131,7 +141,7 @@ When you are ready to send for real:
 
 **2. Tell the app about it**
 
-* In `C:\ReverseBid\ra`, find the file **`.env.example`**.
+* In `C:\ReverseBid`, find the file **`.env.example`**.
 * Copy it (Ctrl+C, Ctrl+V) and rename the copy to exactly **`.env`** — no name in front of the dot.
 * Right-click `.env` → **Open with** → **Notepad**.
 * Fill in these five lines and save:
@@ -174,12 +184,12 @@ clean:
 3. Type these two lines, pressing Enter after each:
 
 ```
-cd /d C:\ReverseBid\ra
+cd /d C:\ReverseBid
 python seed.py --reset
 ```
 
 That deletes everything and rebuilds the demo. To have **nothing at all** instead, delete the
-`data` folder inside `C:\ReverseBid\ra`, start the app, and click **Create an account** on the
+`data` folder inside `C:\ReverseBid`, start the app, and click **Create an account** on the
 sign-in page to make your own buyer login.
 
 ---
@@ -190,8 +200,8 @@ sign-in page to make your own buyer login.
 | --- | --- |
 | `'python' is not recognized…` | Python was installed without the PATH box ticked. Reinstall it from python.org and tick **“Add python.exe to PATH”**, or try typing `py` instead of `python`. |
 | Typing `python` opens the **Microsoft Store** | Press Windows key → type *“app execution aliases”* → open it → switch **off** the two entries called `python.exe` and `python3.exe`. Then install from python.org. |
-| `Address already in use` or the page will not load | Something else is using port 8000. Open Command Prompt, then: `cd /d C:\ReverseBid\ra` and `python -m uvicorn app.main:app --port 8001`, then use `localhost:8001`. |
-| The black window flashes and vanishes | Open Command Prompt, `cd /d C:\ReverseBid\ra`, then type `windows-start.bat` and press Enter. The error stays on screen so you can read it. |
+| `Address already in use` or the page will not load | Something else is using port 8000. Open Command Prompt, then: `cd /d C:\ReverseBid` and `python -m uvicorn app.main:app --port 8001`, then use `localhost:8001`. |
+| The black window flashes and vanishes | Open Command Prompt, `cd /d C:\ReverseBid`, then type `windows-start.bat` and press Enter. The error stays on screen so you can read it. |
 | “Windows protected your PC” | Click **More info** → **Run anyway**. It appears because the file came from a download. |
 | The page says **502** or will not load at all | Check the black window is still open. If it closed, start it again. |
 | Emails are not arriving | Open the **Outbox** page. If messages are listed as `outbox`, no mail server is set up yet — see *Turning on real emails*. If they say `failed`, the reason is shown next to them (usually a wrong app password). |
@@ -205,7 +215,7 @@ The two `.bat` files just save you typing. If you would rather do it by hand, op
 Prompt and run:
 
 ```
-cd /d C:\ReverseBid\ra
+cd /d C:\ReverseBid
 python -m pip install -r requirements.txt
 python seed.py
 python -m uvicorn app.main:app --port 8000

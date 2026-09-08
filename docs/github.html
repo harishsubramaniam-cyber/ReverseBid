@@ -211,8 +211,8 @@ worth doing. Anything pushed to GitHub stays in its history even after you delet
     <h2>Point it at the folder</h2>
     <ol class="plain">
       <li>Menu <strong>File</strong> → <strong>Add local repository…</strong></li>
-      <li>Click <strong>Choose…</strong> and select <code>C:\ReverseBid\ra</code> — the folder with
-        <code>README.md</code> in it, not the <code>ReverseBid</code> folder above it.</li>
+      <li>Click <strong>Choose…</strong> and select <code>C:\ReverseBid</code> — the folder with
+        <code>README.md</code> directly inside it.</li>
       <li>Click <strong>Add repository</strong>.</li>
     </ol>
     <p>In the middle of the window it will say <em>“No local changes”</em>. That is correct: it means
@@ -220,7 +220,7 @@ worth doing. Anything pushed to GitHub stays in its history even after you delet
     <div class="note warn">
       <span class="tag">If it refuses</span>
       <p>“This directory does not appear to be a Git repository” means you picked the wrong folder.
-      Go one level deeper, into <code>ra</code>.</p>
+      The right one has <code>README.md</code> sitting directly inside it.</p>
     </div>
   </div>
 </div>
@@ -295,7 +295,7 @@ git config --global user.email "harish.subramaniam@iiml.org"</code></pre>
     <p>Back in Command Prompt. Replace the address on the second line with the one you just copied:</p>
     <div class="cmd">
       <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
-<pre><code>cd /d C:\ReverseBid\ra
+<pre><code>cd /d C:\ReverseBid
 git remote add origin https://github.com/yourname/reversebid.git
 git branch -M main
 git push -u origin main</code></pre>
@@ -340,7 +340,7 @@ seventy-odd checks passed — bidding rules, emails, reports, the lot. It is alr
 <h3>On the command line</h3>
 <div class="cmd">
   <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
-<pre><code>cd /d C:\ReverseBid\ra
+<pre><code>cd /d C:\ReverseBid
 git add -A
 git commit -m "Reworded the minimum decrement hint"
 git push</code></pre>
@@ -380,7 +380,7 @@ repository: <strong>Settings</strong> → <strong>Collaborators</strong> → <st
       <td>Git is not installed, or your Command Prompt window was already open when you installed
         it. Close the window, open a new one, try again.</td></tr>
     <tr><td>GitHub Desktop: <em>“does not appear to be a Git repository”</em></td>
-      <td>Wrong folder. Choose <code>C:\ReverseBid\ra</code> — the one containing
+      <td>Wrong folder. Choose <code>C:\ReverseBid</code> — the one containing
         <code>README.md</code>.</td></tr>
     <tr><td>It asks for a password and then refuses it</td>
       <td>GitHub stopped accepting account passwords for this. Sign in through the browser window

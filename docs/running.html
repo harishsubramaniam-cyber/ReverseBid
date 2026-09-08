@@ -184,14 +184,18 @@ once; after that, starting it is a double-click.</p>
     <ol class="plain">
       <li>Find <code>reversebid.zip</code> — probably in your <strong>Downloads</strong> folder.</li>
       <li><strong>Right-click</strong> it → <strong>Extract All…</strong></li>
-      <li>Change the box to <code>C:\ReverseBid</code> and click <strong>Extract</strong>.</li>
-      <li>Open <code>C:\ReverseBid</code>. Inside is a folder called <strong>ra</strong> — that is the
-        app. Open it.</li>
+      <li>A box asks where to put it. Delete what is in it, type exactly <code>C:\</code> — just
+        those three characters — and click <strong>Extract</strong>.</li>
+      <li>Open <strong>This PC</strong> → <strong>Local Disk (C:)</strong> →
+        <strong>ReverseBid</strong>. That folder is the app.</li>
     </ol>
-    <p>You should be looking at this:</p>
-    <div class="pathline">C:\ReverseBid\ra\ &nbsp;→&nbsp; windows-setup.bat · windows-start.bat · README.md · app\ · docs\ · tests\</div>
-    <p>Keep it somewhere short and simple like this. Deep folders inside OneDrive occasionally cause
-    odd errors.</p>
+    <p>Directly inside it you should see:</p>
+    <div class="pathline">C:\ReverseBid\ &nbsp;→&nbsp; START HERE.txt · windows-setup.bat · windows-start.bat · README.md · app\ · docs\ · tests\</div>
+    <div class="note warn">
+      <span class="tag">Cannot see those files?</span>
+      <p>You are looking at the wrong folder. The right one has <code>README.md</code> sitting
+      directly inside it. If you see a single folder and nothing else, open that folder.</p>
+    </div>
   </div>
 </div>
 
@@ -290,7 +294,7 @@ once; after that, starting it is a double-click.</p>
   <li><strong>To start again:</strong> double-click <strong>windows-start.bat</strong>. That is all —
     the setup never needs running again.</li>
 </ul>
-<p>Everything you do is saved inside <code>C:\ReverseBid\ra\data\</code> and will still be there
+<p>Everything you do is saved inside <code>C:\ReverseBid\data\</code> and will still be there
 next time.</p>
 
 <hr>
@@ -311,7 +315,7 @@ That is deliberate — leave it that way while you are experimenting.</p>
 
 <h3>2. Tell the app about it</h3>
 <ol class="plain">
-  <li>In <code>C:\ReverseBid\ra</code>, find <strong>.env.example</strong>.</li>
+  <li>In <code>C:\ReverseBid</code>, find <strong>.env.example</strong>.</li>
   <li>Copy and paste it (Ctrl+C, Ctrl+V), then rename the copy to exactly <strong>.env</strong> —
     nothing before the dot.</li>
   <li>Right-click <code>.env</code> → <strong>Open with</strong> → <strong>Notepad</strong>, fill in
@@ -349,11 +353,11 @@ RA_SECRET_KEY=any-long-random-line-of-text-only-you-know</code></pre>
 run:</p>
 <div class="cmd">
   <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
-<pre><code>cd /d C:\ReverseBid\ra
+<pre><code>cd /d C:\ReverseBid
 python seed.py --reset</code></pre>
 </div>
 <p>That wipes everything and rebuilds the demo from scratch. To have <strong>nothing at all</strong>
-instead: delete the <code>data</code> folder inside <code>C:\ReverseBid\ra</code>, start the app,
+instead: delete the <code>data</code> folder inside <code>C:\ReverseBid</code>, start the app,
 and click <strong>Create an account</strong> on the sign-in page to make your own buyer login.</p>
 
 <hr>
@@ -371,10 +375,10 @@ and click <strong>Create an account</strong> on the sign-in page to make your ow
         the two entries named <code>python.exe</code> and <code>python3.exe</code>. Then install from
         python.org.</td></tr>
     <tr><td><code>Address already in use</code>, or the page will not load</td>
-      <td>Something else is on port 8000. In Command Prompt: <code>cd /d C:\ReverseBid\ra</code> then
+      <td>Something else is on port 8000. In Command Prompt: <code>cd /d C:\ReverseBid</code> then
         <code>python -m uvicorn app.main:app --port 8001</code>, and use <code>localhost:8001</code>.</td></tr>
     <tr><td>The black window flashes and vanishes</td>
-      <td>Open Command Prompt, <code>cd /d C:\ReverseBid\ra</code>, then type
+      <td>Open Command Prompt, <code>cd /d C:\ReverseBid</code>, then type
         <code>windows-start.bat</code> and press Enter. The error stays on screen so you can read it.</td></tr>
     <tr><td>“Windows protected your PC”</td>
       <td><strong>More info</strong> → <strong>Run anyway</strong>. It is only because the file was
@@ -397,7 +401,7 @@ and click <strong>Create an account</strong> on the sign-in page to make your ow
 <p>The two <code>.bat</code> files only save you typing. The same thing in Command Prompt:</p>
 <div class="cmd">
   <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
-<pre><code>cd /d C:\ReverseBid\ra
+<pre><code>cd /d C:\ReverseBid
 python -m pip install -r requirements.txt
 python seed.py
 python -m uvicorn app.main:app --port 8000</code></pre>

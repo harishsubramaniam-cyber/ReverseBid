@@ -1,0 +1,18 @@
+ReverseBid
+==========
+
+FIRST TIME:   double-click  windows-setup.bat
+EVERY TIME:   double-click  windows-start.bat
+
+Then sign in at  localhost:8000  with:
+
+    buyer@demo.in     password  demo1234
+
+Full instructions, written for a complete beginner, are in the docs folder:
+
+    docs\1 - Running ReverseBid on Windows.docx
+    docs\2 - Putting ReverseBid on GitHub.docx
+
+If windows-setup.bat says Python is missing, install it from
+www.python.org/downloads/windows and tick 'Add python.exe to PATH'
+on the first screen of the installer.

@@ -36,15 +36,14 @@ account when it asks.
 ### 2. Point it at the folder
 
 * Menu **File** → **Add local repository…**
-* Click **Choose…** and select `C:\ReverseBid\ra` (the folder with `README.md` in it, not the
-  `ReverseBid` folder above it).
+* Click **Choose…** and select `C:\ReverseBid` (the folder with `README.md` in it).
 * Click **Add repository**.
 
 GitHub Desktop recognises it as an existing repository. In the middle of the window you will see
 *“No local changes”* — that is correct and means everything is already committed and ready.
 
-> If it says *“This directory does not appear to be a Git repository”*, you have almost certainly
-> picked the wrong folder. Go one level deeper, into `ra`.
+> If it says *“This directory does not appear to be a Git repository”*, you have picked the wrong
+> folder. The right one has `README.md` sitting directly inside it.
 
 ### 3. Publish it
 
@@ -97,7 +96,7 @@ Back in Command Prompt, run these four lines. Replace the address in the second 
 one you just copied:
 
 ```
-cd /d C:\ReverseBid\ra
+cd /d C:\ReverseBid
 git remote add origin https://github.com/yourname/reversebid.git
 git branch -M main
 git push -u origin main
@@ -141,7 +140,7 @@ Once it is up there, keeping it current is quick.
 **On the command line:**
 
 ```
-cd /d C:\ReverseBid\ra
+cd /d C:\ReverseBid
 git add -A
 git commit -m "Changed the minimum decrement wording"
 git push
@@ -174,7 +173,7 @@ To let a colleague or a developer in on a private repository: **Settings** → *
 | `Updates were rejected because the remote contains work that you do not have` | The GitHub repository was not empty — usually a README got added when it was created. Easiest fix: delete that repository on GitHub (**Settings** → bottom of the page → **Delete this repository**) and create a new one with nothing ticked. |
 | `src refspec main does not match any` | The branch is named something else. Run `git branch -M main` first, then push again. |
 | `'git' is not recognized` | Git is not installed, or Command Prompt was open before you installed it. Close the window, open a new one, and try again. |
-| GitHub Desktop says *“does not appear to be a Git repository”* | Wrong folder — choose `C:\ReverseBid\ra`, the one containing `README.md`. |
+| GitHub Desktop says *“does not appear to be a Git repository”* | Wrong folder — choose `C:\ReverseBid`, the one containing `README.md`. |
 | Asked for a password on the command line and it fails | GitHub stopped accepting account passwords. Sign in through the browser window it opens instead; if none appears, use Route A. |
 | You accidentally uploaded `.env` | Change the mail password immediately, then ask for help removing it — deleting the file is not enough, because it stays in the history. |
 
