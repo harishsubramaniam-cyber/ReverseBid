@@ -1,0 +1,468 @@
+<title>Running ReverseBid on Windows</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+:root{
+  --paper:#F3F6F5; --card:#FFFFFF; --ink:#13201E; --ink-2:#3D4E4B; --ink-3:#687976;
+  --rule:#D9E2E0; --rule-soft:#E7EEEC;
+  --accent:#0C665F; --accent-soft:#E4F1EF; --accent-line:#B7D8D4;
+  --warn:#8A5200; --warn-soft:#FBF2E3; --warn-line:#E8D3AC;
+  --danger:#9E2A2A; --danger-soft:#FAEDED; --danger-line:#E9C6C6;
+  --good:#1D6746; --good-soft:#E8F4EE; --good-line:#BBDDCB;
+  --term-bg:#111A19; --term-ink:#DCE7E5; --term-dim:#849895; --term-rule:#263634;
+  --shadow:0 1px 2px rgba(19,32,30,.05), 0 12px 28px -18px rgba(19,32,30,.35);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#101615; --card:#171E1D; --ink:#EAF0EF; --ink-2:#AFBEBB; --ink-3:#7F918E;
+    --rule:#283331; --rule-soft:#202A29;
+    --accent:#6BD2C6; --accent-soft:#0F2E2B; --accent-line:#1F4F4A;
+    --warn:#E5B166; --warn-soft:#31260F; --warn-line:#5A4519;
+    --danger:#EF9494; --danger-soft:#381E1E; --danger-line:#5E3232;
+    --good:#7FD1A4; --good-soft:#132D20; --good-line:#265240;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 30px -20px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#101615; --card:#171E1D; --ink:#EAF0EF; --ink-2:#AFBEBB; --ink-3:#7F918E;
+  --rule:#283331; --rule-soft:#202A29;
+  --accent:#6BD2C6; --accent-soft:#0F2E2B; --accent-line:#1F4F4A;
+  --warn:#E5B166; --warn-soft:#31260F; --warn-line:#5A4519;
+  --danger:#EF9494; --danger-soft:#381E1E; --danger-line:#5E3232;
+  --good:#7FD1A4; --good-soft:#132D20; --good-line:#265240;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 30px -20px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:"Source Serif 4",Georgia,"Times New Roman",serif;
+  font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:50rem;margin:0 auto;padding:34px 22px 80px}
+h1,h2,h3,.ui{font-family:Archivo,"Segoe UI",system-ui,sans-serif}
+h1{font-size:2.35rem;line-height:1.1;font-weight:700;letter-spacing:-.02em;margin:.1em 0 .35em;text-wrap:balance}
+h2{font-size:1.32rem;font-weight:650;letter-spacing:-.01em;margin:0 0 .5em;text-wrap:balance}
+h3{font-size:1.02rem;font-weight:650;margin:1.6em 0 .4em}
+p{margin:0 0 1em}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+code{font-family:"IBM Plex Mono",Consolas,monospace;font-size:.86em;background:var(--accent-soft);
+  color:var(--ink);padding:.12em .38em;border-radius:4px;border:1px solid var(--accent-line);white-space:nowrap}
+strong{font-weight:600}
+hr{border:0;border-top:1px solid var(--rule);margin:38px 0}
+
+.eyebrow{font-family:Archivo,sans-serif;font-size:.74rem;font-weight:650;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--accent);margin:0}
+.standfirst{font-size:1.1rem;color:var(--ink-2);margin:0 0 1.2em;max-width:34em}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.chip{font-family:"IBM Plex Mono",monospace;font-size:.74rem;letter-spacing:.03em;color:var(--ink-2);
+  background:var(--card);border:1px solid var(--rule);border-radius:999px;padding:4px 11px}
+
+/* ---------------------------------------------------------------- phases */
+.phase{display:flex;align-items:baseline;gap:12px;margin:34px 0 20px}
+.phase h2{margin:0;font-size:1.55rem}
+.phase .badge{font-family:Archivo,sans-serif;font-size:.68rem;font-weight:700;letter-spacing:.13em;
+  text-transform:uppercase;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.badge.once{background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line)}
+.badge.every{background:var(--good-soft);color:var(--good);border:1px solid var(--good-line)}
+
+/* ---------------------------------------------------------------- callouts */
+.note{border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:10px;
+  padding:14px 16px;margin:0 0 1.2em}
+.note>:last-child{margin-bottom:0}
+.note .tag{font-family:Archivo,sans-serif;font-size:.7rem;font-weight:700;letter-spacing:.13em;
+  text-transform:uppercase;display:block;margin-bottom:5px;color:var(--accent)}
+.note.warn{border-color:var(--warn-line);background:var(--warn-soft)}
+.note.warn .tag{color:var(--warn)}
+.note.stop{border-color:var(--danger-line);background:var(--danger-soft)}
+.note.stop .tag{color:var(--danger)}
+.note.done{border-color:var(--good-line);background:var(--good-soft)}
+.note.done .tag{color:var(--good)}
+
+/* ---------------------------------------------------------------- steps */
+.step{display:grid;grid-template-columns:2.6rem 1fr;gap:0 18px;margin:0 0 26px}
+.step-n{font-family:"IBM Plex Mono",monospace;font-size:.95rem;font-weight:500;color:var(--accent);
+  background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:8px;
+  height:2.1rem;display:grid;place-items:center}
+.step-rail{grid-column:1;justify-self:center;width:1px;background:var(--rule);margin:8px 0 0;min-height:8px}
+.step-body{grid-column:2;grid-row:1 / span 2;padding-bottom:4px}
+.step-body>:last-child{margin-bottom:0}
+.step h2{margin-top:.15em}
+ol.plain,ul.plain{margin:0 0 1em;padding-left:1.25em}
+ol.plain li,ul.plain li{margin-bottom:.45em}
+
+/* ---------------------------------------------------------------- terminal */
+.cmd{background:var(--term-bg);border:1px solid var(--term-rule);border-radius:10px;
+  margin:0 0 1.15em;overflow:hidden}
+.cmd-bar{display:flex;align-items:center;gap:8px;padding:7px 10px 7px 12px;border-bottom:1px solid var(--term-rule)}
+.cmd-bar .what{font-family:"IBM Plex Mono",monospace;font-size:.71rem;letter-spacing:.05em;
+  color:var(--term-dim);flex:1;text-transform:uppercase}
+.copy{font-family:Archivo,sans-serif;font-size:.72rem;font-weight:600;letter-spacing:.04em;
+  color:var(--term-ink);background:transparent;border:1px solid var(--term-rule);border-radius:6px;
+  padding:3px 9px;cursor:pointer}
+.copy:hover{background:#1C2A28}
+.cmd pre{margin:0;padding:12px 14px;overflow-x:auto}
+.cmd code{font-family:"IBM Plex Mono",monospace;font-size:.83rem;line-height:1.75;background:none;
+  border:0;padding:0;color:var(--term-ink);white-space:pre}
+
+/* ---------------------------------------------------------------- logins */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:11px;background:var(--card);margin:0 0 1.2em}
+table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:32rem}
+th{font-family:Archivo,sans-serif;text-align:left;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:700;padding:11px 14px;border-bottom:1px solid var(--rule);background:var(--rule-soft)}
+td{padding:12px 14px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tr:last-child td{border-bottom:0}
+td:first-child{color:var(--ink)}
+td.m{font-family:"IBM Plex Mono",monospace;font-size:.83rem;color:var(--ink)}
+#trouble td:first-child{width:38%}
+#trouble td code{white-space:normal}
+
+/* ---------------------------------------------------------------- tour */
+.tour{list-style:none;margin:0 0 1.2em;padding:0;display:flex;flex-direction:column;gap:2px}
+.tour li{display:flex;gap:11px;align-items:flex-start;padding:8px 10px;border-radius:8px}
+.tour li:hover{background:var(--rule-soft)}
+.tour input{margin:.42em 0 0;width:15px;height:15px;accent-color:var(--accent);flex:none}
+.tour label{cursor:pointer}
+.tour input:checked + label{color:var(--ink-3);text-decoration:line-through}
+
+.pathline{font-family:"IBM Plex Mono",monospace;font-size:.8rem;color:var(--ink-3);
+  background:var(--card);border:1px dashed var(--rule);border-radius:8px;padding:9px 12px;margin:0 0 1.2em;
+  overflow-x:auto;white-space:nowrap}
+footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--rule);font-size:.9rem;color:var(--ink-3)}
+</style>
+
+<div class="sheet">
+
+<p class="eyebrow">ReverseBid · Guide 1 of 2</p>
+<h1>Running ReverseBid on&nbsp;Windows</h1>
+<p class="standfirst">Written for someone who has never run a program out of a folder before.
+Everything happens on your own PC — no website, no account, nothing to buy. Steps 1 to 3 you do
+once; after that, starting it is a double-click.</p>
+<ul class="chips">
+  <li class="chip">Windows 10 / 11</li>
+  <li class="chip">~10 minutes</li>
+  <li class="chip">Nothing to buy</li>
+</ul>
+
+<div class="phase" style="margin-top:32px">
+  <h2>Setting it up</h2><span class="badge once">Do this once</span>
+</div>
+
+<div class="step">
+  <span class="step-n">1</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Install Python</h2>
+    <p>Python is the language the app is written in. Your PC almost certainly does not have it.</p>
+    <ol class="plain">
+      <li>Go to <a href="https://www.python.org/downloads/windows/" target="_blank" rel="noopener">python.org/downloads/windows</a>.</li>
+      <li>Click the big yellow <strong>Download Python 3.x</strong> button, then open the file that downloads.</li>
+      <li>On the very first screen, tick <strong>“Add python.exe to PATH”</strong> at the bottom.</li>
+      <li>Click <strong>Install Now</strong>, then <strong>Close</strong>.</li>
+    </ol>
+    <div class="note warn">
+      <span class="tag">This is the step people get wrong</span>
+      <p>That PATH tick box is easy to miss and everything else depends on it. If you have already
+      installed Python without it, run the installer again and choose <strong>Modify</strong>.</p>
+    </div>
+    <p><strong>Check it worked.</strong> Press the <strong>Windows key</strong>, type <code>cmd</code>,
+    press Enter. A black window opens. Type this and press Enter:</p>
+    <div class="cmd">
+      <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>python --version</code></pre>
+    </div>
+    <p>You should see something like <code>Python 3.12.4</code>. If you see “not recognized”, or the
+    Microsoft Store opens instead, jump to <a href="#trouble-heading">If something goes wrong</a>.</p>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">2</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Unzip the app</h2>
+    <ol class="plain">
+      <li>Find <code>reversebid.zip</code> — probably in your <strong>Downloads</strong> folder.</li>
+      <li><strong>Right-click</strong> it → <strong>Extract All…</strong></li>
+      <li>Change the box to <code>C:\ReverseBid</code> and click <strong>Extract</strong>.</li>
+      <li>Open <code>C:\ReverseBid</code>. Inside is a folder called <strong>ra</strong> — that is the
+        app. Open it.</li>
+    </ol>
+    <p>You should be looking at this:</p>
+    <div class="pathline">C:\ReverseBid\ra\ &nbsp;→&nbsp; windows-setup.bat · windows-start.bat · README.md · app\ · docs\ · tests\</div>
+    <p>Keep it somewhere short and simple like this. Deep folders inside OneDrive occasionally cause
+    odd errors.</p>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">3</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Run the setup</h2>
+    <p>Double-click <strong>windows-setup.bat</strong>.</p>
+    <p>A black window opens and text scrolls past for a minute or two — it is downloading the pieces
+    the app needs and building some demo data to play with. When it is done it says
+    <em>“Setup finished.”</em> Press any key to close it.</p>
+    <div class="note warn">
+      <span class="tag">A blue box may appear</span>
+      <p>“Windows protected your PC” shows up because the file arrived from the internet. Click
+      <strong>More info</strong> → <strong>Run anyway</strong>. To stop it asking: right-click the
+      file → <strong>Properties</strong> → tick <strong>Unblock</strong> → <strong>OK</strong>.</p>
+    </div>
+  </div>
+</div>
+
+<div class="phase">
+  <h2>Using it</h2><span class="badge every">Every time</span>
+</div>
+
+<div class="step">
+  <span class="step-n">4</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Start the app</h2>
+    <p>Double-click <strong>windows-start.bat</strong>. Two things happen:</p>
+    <ul class="plain">
+      <li>A black window opens and stays open. <strong>Leave it alone</strong> — that window
+        <em>is</em> the app running. Closing it stops the app.</li>
+      <li>Your browser opens at <strong>localhost:8000</strong>. If it does not, type that into the
+        address bar yourself.</li>
+    </ul>
+    <div class="note">
+      <span class="tag">If Windows asks about the firewall</span>
+      <p>You can safely click <strong>Cancel</strong>. The app only needs to talk to your own
+      browser, not to the network.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">5</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Sign in and look around</h2>
+    <p>The setup built a small demo company with real-looking auctions. Sign in as any of these —
+    the password is <code>demo1234</code> for all of them.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Who you are</th><th>Email</th><th>What you see</th></tr></thead>
+        <tbody>
+          <tr><td><strong>The buyer</strong></td><td class="m">buyer@demo.in</td>
+            <td>Everything — dashboard, auctions, suppliers, reports, outbox</td></tr>
+          <tr><td>The approver</td><td class="m">approver@demo.in</td>
+            <td>Auctions waiting for sign-off</td></tr>
+          <tr><td>A bidder</td><td class="m">vendor1@demo.in</td>
+            <td>Only their own invitations and the bidding screen</td></tr>
+          <tr><td>Another bidder</td><td class="m">vendor2@demo.in</td>
+            <td>The same, competing against the first</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>A five-minute tour, signed in as the buyer</h3>
+    <ul class="tour" id="tour">
+      <li><input type="checkbox" id="t1"><label for="t1">The <strong>Dashboard</strong> — total savings
+        across the demo auctions, in rupees, savings first.</label></li>
+      <li><input type="checkbox" id="t2"><label for="t2"><strong>Auctions</strong> → open
+        <em>“Corrugated boxes and stretch film — live demo”</em>. It is running right now, with a live
+        countdown and bids ranked cheapest first.</label></li>
+      <li><input type="checkbox" id="t3"><label for="t3">Its <strong>Details</strong> tab — the exact
+        email addresses each bidder will be written to.</label></li>
+      <li><input type="checkbox" id="t4"><label for="t4"><strong>Outbox</strong> — every email the app
+        has produced. Click one to read it exactly as a supplier would.</label></li>
+      <li><input type="checkbox" id="t5"><label for="t5"><strong>? Help</strong> in the top bar
+        explains whatever screen you are on. <strong>Ask</strong> beside it answers questions.</label></li>
+    </ul>
+
+    <div class="note done">
+      <span class="tag">Now try it from the other side</span>
+      <p>Open a second browser window in private mode (<strong>Ctrl+Shift+N</strong> in Chrome or
+      Edge), go to <code>localhost:8000</code>, and sign in as <code>vendor1@demo.in</code>. Place a
+      bid there and watch it appear in the buyer's window a few seconds later.</p>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<h2>Stopping, and starting again tomorrow</h2>
+<ul class="plain">
+  <li><strong>To stop:</strong> click the black window and press <strong>Ctrl+C</strong>, or just
+    close it.</li>
+  <li><strong>To start again:</strong> double-click <strong>windows-start.bat</strong>. That is all —
+    the setup never needs running again.</li>
+</ul>
+<p>Everything you do is saved inside <code>C:\ReverseBid\ra\data\</code> and will still be there
+next time.</p>
+
+<hr>
+
+<h2>Turning on real emails</h2>
+<p>Out of the box the app sends <strong>nothing</strong>. Every message goes to the <strong>Outbox</strong>
+page instead, so you can see exactly what suppliers would receive without a real email escaping.
+That is deliberate — leave it that way while you are experimenting.</p>
+
+<h3>1. Get an app password from Gmail</h3>
+<p>Your ordinary Gmail password will not work for this.</p>
+<ol class="plain">
+  <li>Go to <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>.
+    You need 2-Step Verification on first; Google will walk you through it if not.</li>
+  <li>Name it <code>ReverseBid</code> and click <strong>Create</strong>.</li>
+  <li>Google shows a <strong>16-character password</strong>. Copy it now — you cannot see it again.</li>
+</ol>
+
+<h3>2. Tell the app about it</h3>
+<ol class="plain">
+  <li>In <code>C:\ReverseBid\ra</code>, find <strong>.env.example</strong>.</li>
+  <li>Copy and paste it (Ctrl+C, Ctrl+V), then rename the copy to exactly <strong>.env</strong> —
+    nothing before the dot.</li>
+  <li>Right-click <code>.env</code> → <strong>Open with</strong> → <strong>Notepad</strong>, fill in
+    these lines, and save:</li>
+</ol>
+<div class="cmd">
+  <div class="cmd-bar"><span class="what">.env — in Notepad</span><button class="copy" type="button">Copy</button></div>
+<pre><code>RA_SMTP_HOST=smtp.gmail.com
+RA_SMTP_PORT=587
+RA_SMTP_USER=your.name@gmail.com
+RA_SMTP_PASSWORD=the16characterpassword
+RA_MAIL_FROM=your.name@gmail.com
+RA_SECRET_KEY=any-long-random-line-of-text-only-you-know</code></pre>
+</div>
+<div class="note warn">
+  <span class="tag">If Windows hides file extensions</span>
+  <p>Your copy may really be called <code>.env.txt</code>, which will not work. In File Explorer:
+  <strong>View</strong> → tick <strong>File name extensions</strong>, then rename it properly.</p>
+</div>
+
+<h3>3. Restart and check</h3>
+<p>Close the black window, double-click <strong>windows-start.bat</strong> again. The blue
+“emails are in preview mode” banner on the dashboard disappears, and
+<code>localhost:8000/healthz</code> now says <code>"email_mode":"smtp"</code>.</p>
+<div class="note stop">
+  <span class="tag">Clear the demo data first</span>
+  <p>The demo suppliers have invented addresses. Before you publish anything for real with email
+  switched on, wipe them — see the next section.</p>
+</div>
+
+<hr>
+
+<h2>Starting fresh with your own suppliers</h2>
+<p>Stop the app, then press the <strong>Windows key</strong>, type <code>cmd</code>, press Enter, and
+run:</p>
+<div class="cmd">
+  <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>cd /d C:\ReverseBid\ra
+python seed.py --reset</code></pre>
+</div>
+<p>That wipes everything and rebuilds the demo from scratch. To have <strong>nothing at all</strong>
+instead: delete the <code>data</code> folder inside <code>C:\ReverseBid\ra</code>, start the app,
+and click <strong>Create an account</strong> on the sign-in page to make your own buyer login.</p>
+
+<hr>
+
+<h2 id="trouble-heading">If something goes wrong</h2>
+<div class="scroll">
+<table id="trouble">
+  <thead><tr><th>What you see</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td><code>'python' is not recognized</code></td>
+      <td>Python went in without the PATH box ticked. Reinstall from python.org with it ticked — or
+        try typing <code>py</code> everywhere you would type <code>python</code>.</td></tr>
+    <tr><td>Typing <code>python</code> opens the <strong>Microsoft Store</strong></td>
+      <td>Windows key → search <em>“app execution aliases”</em> → open it → switch <strong>off</strong>
+        the two entries named <code>python.exe</code> and <code>python3.exe</code>. Then install from
+        python.org.</td></tr>
+    <tr><td><code>Address already in use</code>, or the page will not load</td>
+      <td>Something else is on port 8000. In Command Prompt: <code>cd /d C:\ReverseBid\ra</code> then
+        <code>python -m uvicorn app.main:app --port 8001</code>, and use <code>localhost:8001</code>.</td></tr>
+    <tr><td>The black window flashes and vanishes</td>
+      <td>Open Command Prompt, <code>cd /d C:\ReverseBid\ra</code>, then type
+        <code>windows-start.bat</code> and press Enter. The error stays on screen so you can read it.</td></tr>
+    <tr><td>“Windows protected your PC”</td>
+      <td><strong>More info</strong> → <strong>Run anyway</strong>. It is only because the file was
+        downloaded.</td></tr>
+    <tr><td>The browser page will not load at all</td>
+      <td>Check the black window is still open. If it closed, start it again.</td></tr>
+    <tr><td>Emails are not arriving</td>
+      <td>Open the <strong>Outbox</strong> page. Messages marked <code>outbox</code> mean no mail
+        server is configured yet. Marked <code>failed</code>, the reason sits beside them — nearly
+        always a mistyped app password.</td></tr>
+    <tr><td>Everything looks broken after a change</td>
+      <td>Stop the app, run <strong>windows-setup.bat</strong> again, then start it.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+
+<h2>Doing it by hand instead</h2>
+<p>The two <code>.bat</code> files only save you typing. The same thing in Command Prompt:</p>
+<div class="cmd">
+  <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>cd /d C:\ReverseBid\ra
+python -m pip install -r requirements.txt
+python seed.py
+python -m uvicorn app.main:app --port 8000</code></pre>
+</div>
+<p>Then open <code>localhost:8000</code>, and press <strong>Ctrl+C</strong> in that window to stop.</p>
+<p>There is also a built-in test that walks a complete auction — bidding rules, emails, awards,
+reports — and prints a tick beside each of about seventy checks. It uses a temporary database, so
+it never touches your real data:</p>
+<div class="cmd">
+  <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>python tests\test_end_to_end.py</code></pre>
+</div>
+
+<footer>ReverseBid · Guide 1 of 2. Guide 2 covers
+<a href="https://claude.ai/code/artifact/d5bcc65a-7048-43b6-a24e-6068d59359de">putting the code on GitHub</a>.</footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Copy the commands - typing a Windows path by hand is where this usually goes wrong.
+  document.querySelectorAll(".cmd").forEach(function (block) {
+    var button = block.querySelector(".copy");
+    var code = block.querySelector("code");
+    if (!button || !code) return;
+    button.addEventListener("click", function () {
+      var text = code.textContent;
+      var done = function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, select);
+      } else {
+        select();
+      }
+      function select() {
+        var range = document.createRange();
+        range.selectNodeContents(code);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        button.textContent = "Press Ctrl+C";
+        setTimeout(function () { button.textContent = "Copy"; }, 2600);
+      }
+    });
+  });
+
+  // Remember how far through the tour you got, on this browser only.
+  var KEY = "reversebid-windows-tour";
+  var boxes = document.querySelectorAll("#tour input[type=checkbox]");
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+    boxes.forEach(function (box) { if (saved.indexOf(box.id) > -1) box.checked = true; });
+  } catch (e) { /* private window or storage blocked - the page still works */ }
+  boxes.forEach(function (box) {
+    box.addEventListener("change", function () {
+      try {
+        var on = [];
+        boxes.forEach(function (b) { if (b.checked) on.push(b.id); });
+        localStorage.setItem(KEY, JSON.stringify(on));
+      } catch (e) { /* nothing to do */ }
+    });
+  });
+})();
+</script>

@@ -15,6 +15,10 @@ uvicorn app.main:app --reload
 # open http://localhost:8000
 ```
 
+On Windows, double-click `windows-setup.bat` once and `windows-start.bat` thereafter.
+**New to this?** `docs\1 - Running ReverseBid on Windows.docx` walks through it from installing
+Python onwards, and `docs\2 - Putting ReverseBid on GitHub.docx` covers getting the code online.
+
 Demo sign-ins (after `python seed.py`), password `demo1234`:
 
 | Role     | Email               | Sees                                             |
@@ -129,8 +133,9 @@ RA_MAIL_FROM=you@gmail.com
 RA_BASE_URL=https://auctions.example.com
 ```
 
-Copy `.env.example` to `.env` and load it however you prefer (`set -a; . ./.env; set +a`, a
-systemd unit, or Docker's `--env-file`).
+Copy `.env.example` to `.env` in the project root and restart — the app reads it on startup.
+Real environment variables always win over the file, so a server configured through its own
+environment (systemd, Docker's `--env-file`, a platform's settings panel) is unaffected.
 
 ---
 
@@ -172,7 +177,9 @@ app/
   templates/       Jinja2 pages + the email template
   static/          one stylesheet, one small script
 seed.py            demo data
+docs/              the two step-by-step guides, as Word documents and markdown
 tests/             end-to-end walk through a full auction
+windows-*.bat      double-clickable setup and start, for Windows
 ```
 
 Two design notes worth knowing:

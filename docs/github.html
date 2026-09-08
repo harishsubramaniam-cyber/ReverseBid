@@ -1,0 +1,461 @@
+<title>Uploading ReverseBid to GitHub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+:root{
+  --paper:#F3F5F9; --card:#FFFFFF; --ink:#151A25; --ink-2:#414A5D; --ink-3:#6C7588;
+  --rule:#DCE0EA; --rule-soft:#E9ECF3;
+  --accent:#3A398C; --accent-soft:#ECECF9; --accent-line:#C7C6EC;
+  --warn:#8A5200; --warn-soft:#FBF2E3; --warn-line:#E8D3AC;
+  --danger:#9E2A2A; --danger-soft:#FAEDED; --danger-line:#E9C6C6;
+  --good:#1D6746; --good-soft:#E8F4EE; --good-line:#BBDDCB;
+  --term-bg:#141824; --term-ink:#DDE3F0; --term-dim:#8B93A8; --term-rule:#2A3145;
+  --shadow:0 1px 2px rgba(21,26,37,.05), 0 12px 28px -18px rgba(21,26,37,.35);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#11141B; --card:#181C25; --ink:#ECEEF5; --ink-2:#B3BAC9; --ink-3:#848C9E;
+    --rule:#2A303D; --rule-soft:#222733;
+    --accent:#A6A4F2; --accent-soft:#22224A; --accent-line:#3B3A78;
+    --warn:#E5B166; --warn-soft:#31260F; --warn-line:#5A4519;
+    --danger:#EF9494; --danger-soft:#381E1E; --danger-line:#5E3232;
+    --good:#7FD1A4; --good-soft:#132D20; --good-line:#265240;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 30px -20px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#11141B; --card:#181C25; --ink:#ECEEF5; --ink-2:#B3BAC9; --ink-3:#848C9E;
+  --rule:#2A303D; --rule-soft:#222733;
+  --accent:#A6A4F2; --accent-soft:#22224A; --accent-line:#3B3A78;
+  --warn:#E5B166; --warn-soft:#31260F; --warn-line:#5A4519;
+  --danger:#EF9494; --danger-soft:#381E1E; --danger-line:#5E3232;
+  --good:#7FD1A4; --good-soft:#132D20; --good-line:#265240;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 30px -20px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:"Source Serif 4",Georgia,"Times New Roman",serif;
+  font-size:17px; line-height:1.62; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:50rem;margin:0 auto;padding:34px 22px 80px}
+h1,h2,h3,.ui{font-family:Archivo,"Segoe UI",system-ui,sans-serif}
+h1{font-size:2.35rem;line-height:1.1;font-weight:700;letter-spacing:-.02em;margin:.1em 0 .35em;text-wrap:balance}
+h2{font-size:1.32rem;font-weight:650;letter-spacing:-.01em;margin:0 0 .5em;text-wrap:balance}
+h3{font-size:1.02rem;font-weight:650;margin:1.6em 0 .4em}
+p{margin:0 0 1em}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+code{font-family:"IBM Plex Mono",Consolas,monospace;font-size:.86em;
+  background:var(--accent-soft);color:var(--ink);padding:.12em .38em;border-radius:4px;
+  border:1px solid var(--accent-line);white-space:nowrap}
+strong{font-weight:600}
+hr{border:0;border-top:1px solid var(--rule);margin:38px 0}
+
+/* ---------------------------------------------------------------- header */
+.eyebrow{font-family:Archivo,sans-serif;font-size:.74rem;font-weight:650;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--accent);margin:0}
+.standfirst{font-size:1.1rem;color:var(--ink-2);margin:0 0 1.2em;max-width:34em}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px;padding:0;list-style:none}
+.chip{font-family:"IBM Plex Mono",monospace;font-size:.74rem;letter-spacing:.03em;
+  color:var(--ink-2);background:var(--card);border:1px solid var(--rule);
+  border-radius:999px;padding:4px 11px}
+
+/* ---------------------------------------------------------------- callouts */
+.note{border:1px solid var(--accent-line);background:var(--accent-soft);
+  border-radius:10px;padding:14px 16px;margin:0 0 1.2em}
+.note>:last-child{margin-bottom:0}
+.note .tag{font-family:Archivo,sans-serif;font-size:.7rem;font-weight:700;letter-spacing:.13em;
+  text-transform:uppercase;display:block;margin-bottom:5px;color:var(--accent)}
+.note.warn{border-color:var(--warn-line);background:var(--warn-soft)}
+.note.warn .tag{color:var(--warn)}
+.note.stop{border-color:var(--danger-line);background:var(--danger-soft)}
+.note.stop .tag{color:var(--danger)}
+.note.done{border-color:var(--good-line);background:var(--good-soft)}
+.note.done .tag{color:var(--good)}
+
+/* ---------------------------------------------------------------- routes */
+.routes{display:grid;gap:14px;grid-template-columns:1fr 1fr;margin:0 0 30px}
+@media(max-width:640px){.routes{grid-template-columns:1fr}}
+.route{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:16px 17px;
+  box-shadow:var(--shadow);display:flex;flex-direction:column;gap:6px}
+.route.pick{border-color:var(--accent);border-width:2px;padding:15px 16px}
+.route .kicker{font-family:Archivo,sans-serif;font-size:.72rem;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3)}
+.route.pick .kicker{color:var(--accent)}
+.route h3{margin:0;font-size:1.08rem}
+.route p{margin:0;font-size:.95rem;color:var(--ink-2)}
+
+/* ---------------------------------------------------------------- steps */
+.step{display:grid;grid-template-columns:2.6rem 1fr;gap:0 18px;margin:0 0 26px}
+.step-n{font-family:"IBM Plex Mono",monospace;font-size:.95rem;font-weight:500;color:var(--accent);
+  background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:8px;
+  height:2.1rem;display:grid;place-items:center}
+.step-rail{grid-column:1;justify-self:center;width:1px;background:var(--rule);margin:8px 0 0;min-height:8px}
+.step-body{grid-column:2;grid-row:1 / span 2;padding-bottom:4px}
+.step-body>:last-child{margin-bottom:0}
+.step h2{margin-top:.15em}
+ol.plain,ul.plain{margin:0 0 1em;padding-left:1.25em}
+ol.plain li,ul.plain li{margin-bottom:.45em}
+
+/* ---------------------------------------------------------------- terminal */
+.cmd{background:var(--term-bg);border:1px solid var(--term-rule);border-radius:10px;
+  margin:0 0 1.15em;overflow:hidden}
+.cmd-bar{display:flex;align-items:center;gap:8px;padding:7px 10px 7px 12px;
+  border-bottom:1px solid var(--term-rule)}
+.cmd-bar .what{font-family:"IBM Plex Mono",monospace;font-size:.71rem;letter-spacing:.05em;
+  color:var(--term-dim);flex:1;text-transform:uppercase}
+.copy{font-family:Archivo,sans-serif;font-size:.72rem;font-weight:600;letter-spacing:.04em;
+  color:var(--term-ink);background:transparent;border:1px solid var(--term-rule);
+  border-radius:6px;padding:3px 9px;cursor:pointer}
+.copy:hover{background:#212739}
+.cmd pre{margin:0;padding:12px 14px;overflow-x:auto}
+.cmd code{font-family:"IBM Plex Mono",monospace;font-size:.83rem;line-height:1.75;
+  background:none;border:0;padding:0;color:var(--term-ink);white-space:pre}
+
+/* ---------------------------------------------------------------- checks */
+.checks{list-style:none;margin:0 0 1.2em;padding:0;display:flex;flex-direction:column;gap:2px}
+.checks li{display:flex;gap:10px;align-items:flex-start;padding:7px 10px;border-radius:8px}
+.checks li:hover{background:var(--rule-soft)}
+.checks input{margin:.42em 0 0;width:15px;height:15px;accent-color:var(--accent);flex:none}
+.checks .yes{color:var(--good);font-weight:600}
+.checks .no{color:var(--danger);font-weight:600}
+.checks label{cursor:pointer}
+.checks input:checked + label{color:var(--ink-3);text-decoration:line-through}
+
+/* ---------------------------------------------------------------- table */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:11px;background:var(--card);
+  margin:0 0 1.2em}
+table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:34rem}
+th{font-family:Archivo,sans-serif;text-align:left;font-size:.72rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:700;padding:11px 14px;
+  border-bottom:1px solid var(--rule);background:var(--rule-soft)}
+td{padding:12px 14px;border-bottom:1px solid var(--rule-soft);vertical-align:top;color:var(--ink-2)}
+tr:last-child td{border-bottom:0}
+td:first-child{color:var(--ink);width:38%}
+td code{white-space:normal}
+
+.files{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.files li{display:grid;grid-template-columns:11rem 1fr;gap:14px;font-size:.95rem;color:var(--ink-2)}
+.files .n{font-family:"IBM Plex Mono",monospace;font-size:.82rem;color:var(--ink)}
+@media(max-width:560px){.files li{grid-template-columns:1fr;gap:2px}}
+
+footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--rule);
+  font-size:.9rem;color:var(--ink-3)}
+</style>
+
+<div class="sheet">
+
+<p class="eyebrow">ReverseBid · Guide 2 of 2</p>
+<h1>Uploading ReverseBid to&nbsp;GitHub</h1>
+<p class="standfirst">A backup, a way to hand the code to a developer, and a record of every
+change you ever make. Twenty minutes, most of it installing one app.</p>
+<ul class="chips">
+  <li class="chip">Windows</li>
+  <li class="chip">~20 minutes</li>
+  <li class="chip">Free account</li>
+</ul>
+
+<div class="note done" style="margin-top:26px">
+  <span class="tag">The hard part is already done</span>
+  <p>The folder you unzipped is <strong>already a Git repository</strong>, with the whole project
+  committed to it in two labelled saves. You are not starting from scratch — you are pointing it
+  at GitHub and pressing send.</p>
+</div>
+
+<hr>
+
+<h2>First: the one thing that matters</h2>
+<p>Two things in that folder must <strong>never</strong> reach GitHub:</p>
+<ul class="plain">
+  <li><code>.env</code> — if you have set up email, this holds your mail password.</li>
+  <li><code>data\</code> — the database, which will hold real supplier names and prices.</li>
+</ul>
+<p>This is already handled: a file called <code>.gitignore</code> lists both, and Git obeys it
+without being asked. You need do nothing — but there is a checking step further down, and it is
+worth doing. Anything pushed to GitHub stays in its history even after you delete it.</p>
+
+<hr>
+
+<h2>Two routes to the same place</h2>
+<div class="routes">
+  <div class="route pick">
+    <span class="kicker">Take this one</span>
+    <h3>Route A · GitHub Desktop</h3>
+    <p>An app with buttons. Install, point it at the folder, click Publish. No typing.</p>
+  </div>
+  <div class="route">
+    <span class="kicker">If you prefer</span>
+    <h3>Route B · The command line</h3>
+    <p>The same thing typed out in four lines. Useful if the app misbehaves.</p>
+  </div>
+</div>
+
+<h2 style="font-size:1.5rem;margin-bottom:1em">Route A — GitHub Desktop</h2>
+
+<div class="step">
+  <span class="step-n">1</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Install it</h2>
+    <p>Download from <a href="https://desktop.github.com" target="_blank" rel="noopener">desktop.github.com</a>
+    and install it. Open it and sign in with your GitHub account when it asks.</p>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">2</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Point it at the folder</h2>
+    <ol class="plain">
+      <li>Menu <strong>File</strong> → <strong>Add local repository…</strong></li>
+      <li>Click <strong>Choose…</strong> and select <code>C:\ReverseBid\ra</code> — the folder with
+        <code>README.md</code> in it, not the <code>ReverseBid</code> folder above it.</li>
+      <li>Click <strong>Add repository</strong>.</li>
+    </ol>
+    <p>In the middle of the window it will say <em>“No local changes”</em>. That is correct: it means
+    everything is already committed and ready to go up.</p>
+    <div class="note warn">
+      <span class="tag">If it refuses</span>
+      <p>“This directory does not appear to be a Git repository” means you picked the wrong folder.
+      Go one level deeper, into <code>ra</code>.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">3</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Publish it</h2>
+    <ol class="plain">
+      <li>Click the <strong>Publish repository</strong> button at the top.</li>
+      <li><strong>Name:</strong> <code>reversebid</code>, or anything you like without spaces.</li>
+      <li><strong>Keep this code private</strong> — leave this <strong>ticked</strong> unless you
+        deliberately want the world to read it. You can change your mind later.</li>
+      <li>Click <strong>Publish repository</strong>.</li>
+    </ol>
+    <p>It uploads in a few seconds. Then <strong>Repository</strong> → <strong>View on GitHub</strong>
+    opens it in your browser.</p>
+  </div>
+</div>
+
+<hr>
+
+<h2 style="font-size:1.5rem;margin-bottom:1em">Route B — the command line</h2>
+
+<div class="step">
+  <span class="step-n">1</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Install Git</h2>
+    <p>Download <strong>Git for Windows</strong> from
+    <a href="https://git-scm.com/download/win" target="_blank" rel="noopener">git-scm.com/download/win</a>.
+    Every default option is fine — keep clicking Next.</p>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">2</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Tell Git who you are</h2>
+    <p>Once, ever. Press the <strong>Windows key</strong>, type <code>cmd</code>, press Enter, and run
+    these with your own details:</p>
+    <div class="cmd">
+      <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>git config --global user.name "Harish Subramaniam"
+git config --global user.email "harish.subramaniam@iiml.org"</code></pre>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">3</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Make an <em>empty</em> repository on GitHub</h2>
+    <ol class="plain">
+      <li>Go to <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a>.</li>
+      <li><strong>Repository name:</strong> <code>reversebid</code>.</li>
+      <li>Choose <strong>Private</strong>, unless you want it visible to everyone.</li>
+      <li>Leave every box below unticked and both dropdowns on <strong>None</strong>.</li>
+      <li>Click <strong>Create repository</strong>, then copy the web address it shows you.</li>
+    </ol>
+    <div class="note stop">
+      <span class="tag">Do not add a README</span>
+      <p>If you tick “Add a README file”, or pick a .gitignore or a licence, the repository will not
+      be empty and your upload will be rejected. It has to start with nothing in it.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <span class="step-n">4</span><span class="step-rail"></span>
+  <div class="step-body">
+    <h2>Send the code up</h2>
+    <p>Back in Command Prompt. Replace the address on the second line with the one you just copied:</p>
+    <div class="cmd">
+      <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>cd /d C:\ReverseBid\ra
+git remote add origin https://github.com/yourname/reversebid.git
+git branch -M main
+git push -u origin main</code></pre>
+    </div>
+    <p>A browser window pops up asking you to sign in to GitHub. Do that, and the upload finishes by
+    itself. You only sign in the first time.</p>
+  </div>
+</div>
+
+<hr>
+
+<h2>Check it worked</h2>
+<p>Open your repository page on github.com and tick these off:</p>
+<ul class="checks" id="verify">
+  <li><input type="checkbox" id="v1"><label for="v1"><span class="yes">Is there</span> — <code>README.md</code>, shown as a formatted page under the file list</label></li>
+  <li><input type="checkbox" id="v2"><label for="v2"><span class="yes">Is there</span> — folders called <code>app</code>, <code>docs</code> and <code>tests</code></label></li>
+  <li><input type="checkbox" id="v3"><label for="v3"><span class="no">Is not there</span> — any file called <code>.env</code></label></li>
+  <li><input type="checkbox" id="v4"><label for="v4"><span class="no">Is not there</span> — any folder called <code>data</code></label></li>
+</ul>
+<div class="note stop">
+  <span class="tag">If one of the last two <em>is</em> there</span>
+  <p>Tell me and I will help you strip it out properly — and if a mail password was inside it,
+  change that password today. Deleting the file on its own is not enough, because Git keeps the
+  history.</p>
+</div>
+<p>You may also see a small orange dot or a green tick beside the newest commit. That is GitHub
+running the project's own test suite on its machines. Click it to watch. A green tick means all
+seventy-odd checks passed — bidding rules, emails, reports, the lot. It is already set up.</p>
+
+<hr>
+
+<h2>Making changes later</h2>
+<p>Every change you save is a labelled point you can go back to.</p>
+<h3>With GitHub Desktop</h3>
+<ol class="plain">
+  <li>Change whatever you want in the files.</li>
+  <li>Open GitHub Desktop — your changes are listed down the left.</li>
+  <li>Type a short note in the <strong>Summary</strong> box, bottom left: <em>“Reworded the minimum
+    decrement hint”</em>.</li>
+  <li>Click <strong>Commit to main</strong>, then <strong>Push origin</strong> at the top.</li>
+</ol>
+<h3>On the command line</h3>
+<div class="cmd">
+  <div class="cmd-bar"><span class="what">Command Prompt</span><button class="copy" type="button">Copy</button></div>
+<pre><code>cd /d C:\ReverseBid\ra
+git add -A
+git commit -m "Reworded the minimum decrement hint"
+git push</code></pre>
+</div>
+
+<hr>
+
+<h2>Private or public?</h2>
+<ul class="plain">
+  <li><strong>Private</strong> — only you and the people you invite can see it. Right for anything
+    carrying your organisation's process or plans. Free, with no limit on how many.</li>
+  <li><strong>Public</strong> — anyone can read it. Safe for this code, which holds no passwords,
+    but the README does describe how you run auctions.</li>
+</ul>
+<p>Switch at any time: repository → <strong>Settings</strong> → bottom of the page →
+<strong>Change repository visibility</strong>. To let a colleague or a developer into a private
+repository: <strong>Settings</strong> → <strong>Collaborators</strong> → <strong>Add people</strong>.</p>
+
+<hr>
+
+<h2>If something goes wrong</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>What you see</th><th>What it means, and what to do</th></tr></thead>
+  <tbody>
+    <tr><td><code>remote origin already exists</code></td>
+      <td>You have run the <code>git remote add</code> line before. Use
+        <code>git remote set-url origin &lt;address&gt;</code> instead.</td></tr>
+    <tr><td><code>Updates were rejected because the remote contains work that you do not have</code></td>
+      <td>The GitHub repository was not empty — usually a README got added when you created it.
+        Simplest fix: delete that repository (<strong>Settings</strong> → bottom → <strong>Delete
+        this repository</strong>) and make a new one with nothing ticked.</td></tr>
+    <tr><td><code>src refspec main does not match any</code></td>
+      <td>The branch is called something else. Run <code>git branch -M main</code> first, then push
+        again.</td></tr>
+    <tr><td><code>'git' is not recognized</code></td>
+      <td>Git is not installed, or your Command Prompt window was already open when you installed
+        it. Close the window, open a new one, try again.</td></tr>
+    <tr><td>GitHub Desktop: <em>“does not appear to be a Git repository”</em></td>
+      <td>Wrong folder. Choose <code>C:\ReverseBid\ra</code> — the one containing
+        <code>README.md</code>.</td></tr>
+    <tr><td>It asks for a password and then refuses it</td>
+      <td>GitHub stopped accepting account passwords for this. Sign in through the browser window
+        it opens instead; if no window appears, use Route A.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+
+<h2>What actually got uploaded</h2>
+<ul class="files">
+  <li><span class="n">app\</span><span>The application itself — the auction engine, the emails, the screens.</span></li>
+  <li><span class="n">docs\</span><span>These two guides.</span></li>
+  <li><span class="n">tests\</span><span>The automated check that walks a whole auction end to end.</span></li>
+  <li><span class="n">seed.py</span><span>Builds the demo suppliers and auctions.</span></li>
+  <li><span class="n">README.md</span><span>The technical description. GitHub shows it on the front page.</span></li>
+  <li><span class="n">Dockerfile</span><span>For putting it on a server later, when you outgrow your own PC.</span></li>
+  <li><span class="n">.env.example</span><span>A <em>blank</em> template listing the settings that exist. Your filled-in <code>.env</code> stays on your PC.</span></li>
+</ul>
+<p style="margin-top:1.2em">Two commits are already in the history, each with a written note about
+what it did. Anyone you hand this to can read that history and understand how the thing was
+built.</p>
+
+<footer>ReverseBid · Guide 2 of 2. Guide 1 covers installing and running it on your PC.</footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Copy the commands, because typing a Windows path by hand is where this goes wrong.
+  document.querySelectorAll(".cmd").forEach(function (block) {
+    var button = block.querySelector(".copy");
+    var code = block.querySelector("code");
+    if (!button || !code) return;
+    button.addEventListener("click", function () {
+      var text = code.textContent;
+      var done = function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, select);
+      } else {
+        select();
+      }
+      function select() {
+        var range = document.createRange();
+        range.selectNodeContents(code);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        button.textContent = "Press Ctrl+C";
+        setTimeout(function () { button.textContent = "Copy"; }, 2600);
+      }
+    });
+  });
+
+  // Remember which verification boxes you ticked, on this browser only.
+  var KEY = "reversebid-github-checks";
+  var boxes = document.querySelectorAll("#verify input[type=checkbox]");
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+    boxes.forEach(function (box) { if (saved.indexOf(box.id) > -1) box.checked = true; });
+  } catch (e) { /* private window, or storage blocked - the page works either way */ }
+  boxes.forEach(function (box) {
+    box.addEventListener("change", function () {
+      try {
+        var on = [];
+        boxes.forEach(function (b) { if (b.checked) on.push(b.id); });
+        localStorage.setItem(KEY, JSON.stringify(on));
+      } catch (e) { /* nothing to do */ }
+    });
+  });
+})();
+</script>

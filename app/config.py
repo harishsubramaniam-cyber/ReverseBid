@@ -3,6 +3,28 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv() -> None:
+    """Read a plain ``.env`` file sitting next to the app, if there is one.
+
+    Real environment variables always win, so a .env file is a convenience for
+    running locally and never overrides how a server is configured.
+    """
+    path = Path(os.getenv("RA_ENV_FILE", BASE_DIR / ".env"))
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
 DATA_DIR = Path(os.getenv("RA_DATA_DIR", BASE_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 OUTBOX_DIR = DATA_DIR / "outbox"
