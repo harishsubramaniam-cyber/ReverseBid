@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ auction.reference }} summary — {{ app_name }}{% endblock %}
+{% block wrapclass %}wide{% endblock %}
+{% block content %}
+{% set s = data.summary %}
+<div class="page-head">
+  <div class="grow"><div class="muted small mono">{{ auction.reference }}</div>
+    <h1>Auction summary</h1><p class="sub">{{ auction.title }}</p></div>
+  <div class="btn-row">
+    <a class="btn" href="/reports/auction/{{ auction.id }}/export/pdf">Download PDF</a>
+    <a class="btn ghost" href="/reports/auction/{{ auction.id }}/export/csv">Download CSV</a>
+    <a class="btn ghost" href="/auctions/{{ auction.id }}">Open auction</a></div>
+</div>
+
+<div class="grid g4" style="margin-bottom:16px">
+  <div class="stat"><div class="k">Ran</div><div class="v" style="font-size:.95rem">{{ fmt_dt(auction.start_at, False) }}<br>to {{ fmt_dt(auction.end_at, False) }}</div></div>
+  <div class="stat"><div class="k">Bids</div><div class="v mono">{{ s.total_bids }}</div>
+    <div class="h">from {{ s.active_bidders }} of {{ s.participants }} invited</div></div>
+  <div class="stat"><div class="k">Baseline → final</div>
+    <div class="v mono" style="font-size:1.1rem">{{ fmt_money(s.baseline) }} → {{ fmt_money(s.final_value) }}</div></div>
+  <div class="stat hero"><div class="k">Savings</div><div class="v">{{ fmt_money(s.savings) }}</div>
+    <div class="h">{{ '%.1f'|format(s.savings_pct) }}% · basis: {{ s.basis }}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Line by line</h3></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Starting price</th>
+      <th class="num">Highest bid</th><th class="num">Lowest bid</th><th class="num">Savings</th><th>Awarded to</th></tr></thead>
+    <tbody>
+    {% for entry in data.lines %}
+      <tr><td>{{ entry.label }}</td>
+        <td class="num mono">{{ fmt_qty(entry.line.qty) }}</td>
+        <td class="num mono">{{ fmt_money(entry.line.starting_price) }}</td>
+        <td class="num mono">{{ fmt_money(entry.highest.unit_price) if entry.highest else '—' }}</td>
+        <td class="num mono"><b>{{ fmt_money(entry.lowest.unit_price) if entry.lowest else '—' }}</b></td>
+        <td class="num mono" style="color:var(--good)">{{ fmt_money(entry.result.savings) }}</td>
+        <td class="small">{% for award in entry.awards %}{{ award.vendor.name }}
+          ({{ fmt_qty(award.qty) }} @ {{ fmt_money(award.unit_price) }}){% if not loop.last %}<br>{% endif %}
+          {% else %}—{% endfor %}</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Every bid placed</h3></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>When</th><th>Item</th><th>Bidder</th><th class="num">Unit price</th>
+      <th class="num">Line total</th><th>Status</th></tr></thead><tbody>
+    {% for entry in data.lines %}{% for bid in entry.history|sort(attribute='created_at') %}
+      <tr><td class="small">{{ fmt_dt(bid.created_at, False) }}</td>
+        <td>{{ entry.label }}</td><td>{{ bid.vendor.name }}</td>
+        <td class="num mono">{{ fmt_money(bid.unit_price) }}</td>
+        <td class="num mono">{{ fmt_money(bid.total) }}</td>
+        <td>{% if bid.withdrawn %}<span class="pill bad">withdrawn</span>{% else %}<span class="pill good">live</span>{% endif %}</td></tr>
+    {% endfor %}{% endfor %}
+  </tbody></table></div>
+</div>
+{% endblock %}

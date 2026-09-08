@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Getting started — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow">
+  <h1>Welcome, {{ user.name.split()[0] }} 👋</h1>
+  <p class="sub">Here is the whole thing in four steps. It should take under five minutes.</p>
+</div></div>
+
+<div class="grid g2">
+  <div class="card">
+    <h2>How a reverse auction works</h2>
+    <p>A normal auction goes up. This one goes down.</p>
+    <ol class="steps" style="margin-top:14px">
+      <li><b>You set a ceiling.</b> The starting price is the most you are willing to pay per unit.</li>
+      <li><b>Your suppliers compete.</b> Each new bid has to be lower than the current best, by an amount you choose.</li>
+      <li><b>The clock protects everyone.</b> A bid in the last moments pushes the finish line back, so nobody wins by sniping.</li>
+      <li><b>You award.</b> Give a line to one supplier or split it across several. Everyone gets an email either way.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>{% if user.is_vendor %}Your first bid{% else %}Your first auction{% endif %}</h2>
+    {% if user.is_vendor %}
+    <p>You will get an email the moment a buyer invites you. Nothing to set up.</p>
+    <ol class="steps" style="margin-top:14px">
+      <li>Open the invitation email or the <a href="/auctions">Auctions</a> page.</li>
+      <li>Read the items, quantities and the starting price — that is the buyer's ceiling.</li>
+      <li>Type your price per unit and press <b>Place bid</b>. Bid again as often as you like.</li>
+      <li>If someone goes lower we email you straight away, so you can respond.</li>
+    </ol>
+    <a class="btn" href="/auctions">See my auctions</a>
+    {% else %}
+    <ol class="steps" style="margin-top:14px">
+      <li><b>Add a few vendors</b> — a name and an email is all we need.
+        <span class="muted small">({{ counts.vendors }} so far)</span></li>
+      <li><b>Add the items you buy</b> — just a name.
+        <span class="muted small">({{ counts.items }} so far)</span></li>
+      <li><b>Create an auction</b> and pick the vendors to invite. Anything missing can be added
+        on the form itself.</li>
+      <li><b>Publish.</b> Invitations go out by email immediately.</li>
+    </ol>
+    <div class="btn-row">
+      <a class="btn" href="/auctions/new">Create my first auction</a>
+      <a class="btn ghost" href="/masters">Add vendors and items</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Two things worth knowing</h3></div>
+  <div class="grid g2">
+    <div><b>The <span style="color:var(--brand)">? Help</span> button</b> in the top bar explains
+      whatever screen you are on, in plain language. <b>Ask</b> next to it answers questions.</div>
+    <div><b>Every email is logged.</b> Open <a href="/outbox">Outbox</a> to see exactly what your
+      vendors received, and when.</div>
+  </div>
+  <form method="post" action="/onboarding/done" style="margin-top:14px">
+    <button class="btn ghost" type="submit">Got it — take me to the dashboard</button>
+  </form>
+</div>
+{% endblock %}

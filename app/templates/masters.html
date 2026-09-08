@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Vendors &amp; items — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Vendors, items and units</h1>
+  <p class="sub">The lists you pick from when creating an auction. Only the obvious fields are required.</p></div></div>
+
+<div class="tabs">
+  <a href="?tab=vendors" class="{{ 'on' if tab == 'vendors' }}">Vendors ({{ vendors|length }})</a>
+  <a href="?tab=items" class="{{ 'on' if tab == 'items' }}">Items ({{ items|length }})</a>
+  <a href="?tab=units" class="{{ 'on' if tab == 'units' }}">Units ({{ units|length }})</a>
+</div>
+
+<form method="get" class="card tight" style="display:flex;gap:10px;align-items:flex-end">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <div style="flex:1"><label for="q">Search</label><input id="q" type="search" name="q" value="{{ q }}"></div>
+  <button class="btn ghost" type="submit">Search</button>
+</form>
+
+{% if tab == 'vendors' %}
+<div class="grid g2">
+  <div class="card">
+    <div class="card-head"><h3>Add a vendor</h3></div>
+    <form method="post" action="/masters/vendors">
+      <div class="field"><label>Company name *</label><input name="name" required>
+        <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
+      <div class="field"><label>Email *</label><input type="email" name="email" required>
+        <p class="hint">{{ FIELD_HELP.vendor_email }}</p></div>
+      <div class="row">
+        <div class="field"><label>Vendor code</label><input name="code"></div>
+        <div class="field"><label>Contact person</label><input name="contact_person"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Phone</label><input name="phone"></div>
+        <div class="field"><label>Tax / GST number</label><input name="gstin"></div>
+      </div>
+      <div class="field"><label>Address</label><textarea name="address"></textarea></div>
+      <button class="btn" type="submit">Save vendor</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>{{ vendors|length }} vendor(s)</h3></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr></thead><tbody>
+      {% for vendor in vendors %}
+        <tr><td><b>{{ vendor.name }}</b>{% if vendor.code %}<div class="muted small">{{ vendor.code }}</div>{% endif %}</td>
+          <td class="small">{{ vendor.email }}{% if vendor.phone %}<div class="muted">{{ vendor.phone }}</div>{% endif %}</td>
+          <td><span class="pill {{ 'good' if vendor.is_active else 'closed' }}">{{ 'active' if vendor.is_active else 'archived' }}</span></td>
+          <td><form method="post" action="/masters/vendors/{{ vendor.id }}/toggle">
+            <button class="linkbtn" type="submit">{{ 'Archive' if vendor.is_active else 'Restore' }}</button></form></td></tr>
+      {% endfor %}
+      {% if not vendors %}<tr><td colspan="4" class="empty">No vendors yet.</td></tr>{% endif %}
+    </tbody></table></div>
+  </div>
+</div>
+
+{% elif tab == 'items' %}
+<div class="grid g2">
+  <div class="card">
+    <div class="card-head"><h3>Add an item</h3></div>
+    <form method="post" action="/masters/items">
+      <div class="field"><label>Item name *</label><input name="name" required>
+        <p class="hint">{{ FIELD_HELP.item_name }}</p></div>
+      <div class="row">
+        <div class="field"><label>Item code</label><input name="code"></div>
+        <div class="field"><label>Category</label><input name="category"></div>
+        <div class="field"><label>Default unit</label>
+          <select name="default_unit_id"><option value="">—</option>
+            {% for unit in units %}<option value="{{ unit.id }}">{{ unit.code }}</option>{% endfor %}</select></div>
+      </div>
+      <div class="field"><label>Description</label><textarea name="description"></textarea></div>
+      <button class="btn" type="submit">Save item</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>{{ items|length }} item(s)</h3></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Unit</th><th>Status</th><th></th></tr></thead><tbody>
+      {% for item in items %}
+        <tr><td><b>{{ item.name }}</b>{% if item.category %}<div class="muted small">{{ item.category }}</div>{% endif %}</td>
+          <td>{{ item.default_unit.code if item.default_unit else '—' }}</td>
+          <td><span class="pill {{ 'good' if item.is_active else 'closed' }}">{{ 'active' if item.is_active else 'archived' }}</span></td>
+          <td><form method="post" action="/masters/items/{{ item.id }}/toggle">
+            <button class="linkbtn" type="submit">{{ 'Archive' if item.is_active else 'Restore' }}</button></form></td></tr>
+      {% endfor %}
+      {% if not items %}<tr><td colspan="4" class="empty">No items yet.</td></tr>{% endif %}
+    </tbody></table></div>
+  </div>
+</div>
+
+{% else %}
+<div class="grid g2">
+  <div class="card">
+    <div class="card-head"><h3>Add a unit</h3></div>
+    <form method="post" action="/masters/units">
+      <div class="field"><label>Short code *</label><input name="code" required placeholder="KG">
+        <p class="hint">{{ FIELD_HELP.unit_code }}</p></div>
+      <div class="field"><label>Full name</label><input name="name" placeholder="Kilogram"></div>
+      <button class="btn" type="submit">Save unit</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>{{ units|length }} unit(s)</h3></div>
+    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Name</th></tr></thead><tbody>
+      {% for unit in units %}<tr><td><b>{{ unit.code }}</b></td><td>{{ unit.name or '—' }}</td></tr>{% endfor %}
+      {% if not units %}<tr><td colspan="2" class="empty">No units yet.</td></tr>{% endif %}
+    </tbody></table></div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

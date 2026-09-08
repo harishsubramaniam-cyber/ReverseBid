@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Create an account — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="auth">
+  <div class="card">
+    <h1>Create your account</h1>
+    <p class="muted small">Takes about thirty seconds.</p>
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    <form method="post" action="/signup">
+      <div class="field"><label>I am…</label>
+        <label class="check"><input type="radio" name="account_type" value="buyer" checked>
+          <span><span class="t">Buying</span><span class="d">I run auctions and award the business.</span></span></label>
+        <label class="check"><input type="radio" name="account_type" value="vendor">
+          <span><span class="t">Supplying</span><span class="d">I place bids in auctions I am invited to.</span></span></label>
+      </div>
+      <div class="field"><label for="name">Your name</label>
+        <input id="name" name="name" value="{{ name or '' }}" required></div>
+      <div class="field"><label for="company">Company <span class="muted small">(optional for buyers)</span></label>
+        <input id="company" name="company"></div>
+      <div class="field"><label for="email">Work email</label>
+        <input id="email" type="email" name="email" value="{{ email or '' }}" required>
+        <p class="hint">This is where auction alerts will go.</p></div>
+      <div class="field"><label for="password">Password</label>
+        <input id="password" type="password" name="password" minlength="6" required>
+        <p class="hint">At least 6 characters.</p></div>
+      <button class="btn block" type="submit">Create account</button>
+    </form>
+    <p class="small muted" style="margin-top:14px;text-align:center">
+      Already have one? <a href="/login">Sign in</a></p>
+  </div>
+</div>
+{% endblock %}

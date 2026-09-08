@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow">
+    <h1>Dashboard</h1>
+    <p class="sub">Savings first — everything else follows.</p>
+  </div>
+  <div class="btn-row">
+    <a class="btn" href="/auctions/new">+ New auction</a>
+    <a class="btn ghost" href="/reports">Reports</a>
+  </div>
+</div>
+
+<div class="grid g4" style="margin-bottom:16px">
+  <div class="stat hero">
+    <div class="k">Total savings</div>
+    <div class="v">{{ fmt_money(metrics.savings) }}</div>
+    <div class="h">{{ '%.1f'|format(metrics.savings_pct) }}% below the starting prices, across awarded auctions</div>
+  </div>
+  <div class="stat"><div class="k">Baseline value</div><div class="v mono">{{ fmt_money(metrics.baseline) }}</div>
+    <div class="h">Quantity × starting price</div></div>
+  <div class="stat"><div class="k">Awarded value</div><div class="v mono">{{ fmt_money(metrics.spend) }}</div>
+    <div class="h">What you actually committed</div></div>
+  <div class="stat"><div class="k">Auctions</div><div class="v mono">{{ metrics.total }}</div>
+    <div class="h">{{ metrics.live }} live · {{ metrics.scheduled }} scheduled · {{ metrics.awaiting_award }} awaiting award</div></div>
+</div>
+
+<div class="grid g2">
+  <div class="card">
+    <div class="card-head"><h3>Savings by month</h3><span class="spacer"></span>
+      <span class="muted small">last 6 months</span></div>
+    {% set peak = (trend | map(attribute='value') | max) or 1 %}
+    <div class="spark">
+      {% for bucket in trend %}
+      <div class="b" title="{{ bucket.label }}: {{ fmt_money(bucket.value) }} from {{ bucket.count }} auction(s)">
+        <i style="height:{{ (bucket.value / peak * 100) if peak else 0 }}%"></i>
+      </div>
+      {% endfor %}
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      {% for bucket in trend %}<div style="flex:1;text-align:center" class="muted small">{{ bucket.label }}</div>{% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>Closing soon</h3></div>
+    {% if closing %}
+      {% for auction in closing %}
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)">
+        <div style="flex:1;min-width:0">
+          <a href="/auctions/{{ auction.id }}"><b>{{ auction.title }}</b></a>
+          <div class="muted small">{{ auction.reference }} · {{ auction.lines|length }} item(s)</div>
+        </div>
+        <span class="clock small" data-deadline="{{ epoch(auction.end_at) }}"></span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty"><div class="big">🕘</div>Nothing is live right now.
+        <div><a href="/auctions/new">Create an auction</a></div></div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Recent auctions</h3><span class="spacer"></span>
+    <a class="small" href="/auctions">See all</a></div>
+  {% if recent %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Reference</th><th>Auction</th><th>Status</th><th>Ends</th>
+      <th class="num">Baseline</th><th class="num">Savings</th><th></th></tr></thead>
+    <tbody>
+    {% for auction in recent %}
+      <tr>
+        <td class="mono small">{{ auction.reference }}</td>
+        <td><a href="/auctions/{{ auction.id }}">{{ auction.title }}</a>
+            <div class="muted small">{{ auction.lines|length }} item(s) · {{ auction.participants|length }} bidder(s)</div></td>
+        <td><span class="pill {{ auction.status.value }}">{{ auction.status.value.replace('_',' ') }}</span></td>
+        <td class="small">{{ fmt_dt(auction.end_at, False) }}</td>
+        <td class="num mono">{{ fmt_money(auction.baseline_value) }}</td>
+        <td class="num mono">{% set s = summaries.get(auction.id) %}{% if s and s.savings > 0 %}<b style="color:var(--good)">{{ fmt_money(s.savings) }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td><a class="btn ghost sm" href="/auctions/{{ auction.id }}">Open</a></td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}
+  <div class="empty"><div class="big">📦</div>
+    <p>No auctions yet. The first one takes about two minutes.</p>
+    <a class="btn" href="/auctions/new">Create an auction</a></div>
+  {% endif %}
+</div>
+
+{% if top %}
+<div class="card">
+  <div class="card-head"><h3>Best savings so far</h3></div>
+  {% for entry in top %}
+  <div style="padding:9px 0;border-bottom:1px solid var(--line)">
+    <div style="display:flex;gap:10px;align-items:baseline">
+      <a href="/auctions/{{ entry.auction.id }}" style="flex:1"><b>{{ entry.auction.title }}</b></a>
+      <span class="mono"><b>{{ fmt_money(entry.savings) }}</b></span>
+      <span class="pill good">{{ '%.1f'|format(entry.savings_pct) }}%</span>
+    </div>
+    <div class="bar" style="margin-top:6px"><span style="width:{{ [entry.savings_pct, 100]|min }}%"></span></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

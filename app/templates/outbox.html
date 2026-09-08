@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Email outbox — {{ app_name }}{% endblock %}
+{% block wrapclass %}wide{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Email outbox</h1>
+  <p class="sub">Every message the platform produced, newest first.</p></div></div>
+
+{% if not email_enabled %}
+<div class="alert info"><div><b>Preview mode.</b> No mail server is configured, so messages are
+  saved here (and as .eml files) instead of being sent. Set <code>RA_SMTP_HOST</code> and friends
+  in your environment file to switch on real sending — nothing else changes.</div></div>
+{% endif %}
+
+<form method="get" class="card tight" style="display:flex;gap:10px;align-items:flex-end">
+  <div style="flex:1"><label for="q">Search subject or recipient</label>
+    <input id="q" type="search" name="q" value="{{ q }}"></div>
+  <button class="btn ghost" type="submit">Search</button>
+</form>
+
+<div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>To</th><th>Subject</th><th>Event</th><th>Status</th><th></th></tr></thead><tbody>
+  {% for m in rows %}
+    <tr><td class="small">{{ fmt_dt(m.created_at, False) }}</td>
+      <td class="small">{{ m.to_name }}<div class="muted">{{ m.to_email }}</div></td>
+      <td><a href="/outbox/{{ m.id }}">{{ m.subject }}</a></td>
+      <td><span class="pill closed">{{ m.event or '—' }}</span></td>
+      <td><span class="pill {{ 'good' if m.status in ('sent','outbox') else 'bad' }}">{{ m.status }}</span>
+        {% if m.error %}<div class="muted small">{{ m.error }}</div>{% endif %}</td>
+      <td><a class="btn ghost sm" href="/outbox/{{ m.id }}">Open</a></td></tr>
+  {% endfor %}
+  {% if not rows %}<tr><td colspan="6" class="empty">Nothing sent yet.</td></tr>{% endif %}
+</tbody></table></div>
+{% endblock %}

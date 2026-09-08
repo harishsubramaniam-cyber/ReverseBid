@@ -1,0 +1,192 @@
+# ReverseBid — a reverse auction platform
+
+A complete, self-contained reverse auction application: buyers publish a **ceiling** price,
+invited suppliers compete by bidding **downwards**, and the lowest price wins. It covers the
+whole cycle — onboarding, masters, auction creation, the live bidding engine, awarding,
+reporting, and an email on every key event.
+
+Built with FastAPI + SQLAlchemy + SQLite and server-rendered HTML. No build step, no
+JavaScript framework, one command to run.
+
+```bash
+pip install -r requirements.txt
+python seed.py                      # optional demo data
+uvicorn app.main:app --reload
+# open http://localhost:8000
+```
+
+Demo sign-ins (after `python seed.py`), password `demo1234`:
+
+| Role     | Email               | Sees                                             |
+| -------- | ------------------- | ------------------------------------------------ |
+| Buyer    | `buyer@demo.in`     | Dashboard, auctions, masters, reports, outbox     |
+| Approver | `approver@demo.in`  | The approvals queue                               |
+| Bidder   | `vendor1@demo.in` … `vendor4@demo.in` | Their invitations and the bidding screen |
+
+---
+
+## What is built
+
+**1 — Easy to adopt**
+
+* Guided onboarding that explains the whole model in four steps.
+* A **? Help** drawer on every screen and an **Ask** assistant, both in plain language.
+  Every form field carries a one-line hint.
+* Vendor, item and unit masters where only the obvious fields are mandatory — a vendor needs a
+  name and an email, an item needs a name, a unit needs a code.
+* Odoo-style inline create: add a vendor, item or unit from inside the auction form without
+  losing your place.
+
+**2 — The auction engine**
+
+* Creation and scheduling with editable start/end times until bidding opens.
+* Starting price as a **ceiling** — no bid may sit above it.
+* Live rank (L1, L2, L3…) and lowest-bid visibility, each switchable per auction.
+* **Minimum decrement** (how much lower each bid must be) and **maximum decrement**
+  (the biggest drop allowed in one step), as a fixed amount or a percentage.
+* Hidden bidder names — bidders see each other as “Bidder A”, “Bidder B”; the buyer always
+  sees the real names.
+* **Auto-extension**: a bid inside the closing window pushes the finish line back, with a
+  configurable trigger, extension length and maximum number of extensions.
+
+**3 — Award**
+
+* Line-item award, splittable across several vendors with per-vendor quantity and price.
+* Awards default to the winning bid and are recorded against the auction; over-awarding a line
+  is refused.
+
+**4 — Reports and dashboard**
+
+* Savings-first dashboard: total savings, baseline, awarded value, savings by month, closing soon.
+* **Report 1 — Total Savings** across every auction in a date range.
+* **Report 2 — Individual Auction Summary**: every bid, the highest and lowest price, line-level
+  savings and the awardee.
+* Both download as **PDF** and **CSV**.
+
+**5 — Reach everyone, anywhere**
+
+* Email plus in-app notification on every key event: invitation, opening, bid received, outbid,
+  extension, closing soon, closed, awarded, not awarded, cancelled, messages, approvals.
+* Outbid alerts that pull vendors back into the auction.
+* Fully responsive — buyers and bidders can work from a phone browser, with a bottom nav bar.
+
+**6 — Generic platform features**
+
+* Private conversations between each bidder and the auction creator.
+* An append-only audit trail on every action, visible on each auction.
+* Approval / rejection / rework workflow before an auction may go live.
+* Withdraw a bid, edit an auction before it opens, cancel with a reason at any time.
+
+---
+
+## Email
+
+Email is real SMTP, with a safety net.
+
+* Set `RA_SMTP_HOST` (and friends) and messages are genuinely sent.
+* Leave it unset and every message is written to `data/outbox/*.eml` **and** to the in-app
+  **Outbox** page, so you can see exactly what a vendor would receive without sending anything.
+
+Either way every message is logged in the `email_messages` table with its status. Sending happens
+on a background thread, so a slow mail server never blocks a bid.
+
+Gmail example (`.env`):
+
+```
+RA_SMTP_HOST=smtp.gmail.com
+RA_SMTP_PORT=587
+RA_SMTP_USER=you@gmail.com
+RA_SMTP_PASSWORD=your-16-character-app-password
+RA_MAIL_FROM=you@gmail.com
+RA_BASE_URL=https://auctions.example.com
+```
+
+Copy `.env.example` to `.env` and load it however you prefer (`set -a; . ./.env; set +a`, a
+systemd unit, or Docker's `--env-file`).
+
+---
+
+## Configuration
+
+All settings are environment variables — see `app/config.py`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RA_DATABASE_URL` | `sqlite:///data/reverse_auction.db` | Any SQLAlchemy URL; PostgreSQL works unchanged |
+| `RA_SECRET_KEY` | `dev-secret-change-me` | **Change this in production** — it signs session cookies |
+| `RA_BASE_URL` | `http://localhost:8000` | Used for the links inside emails |
+| `RA_TIMEZONE` | `Asia/Kolkata` | All times are stored in UTC and displayed here |
+| `RA_CURRENCY` / `RA_CURRENCY_SYMBOL` | `INR` / `₹` | Display only |
+| `RA_SMTP_*`, `RA_MAIL_FROM` | empty | See above |
+| `RA_SCHEDULER_INTERVAL` | `5` | Seconds between clock ticks |
+| `RA_ENDING_SOON_MINUTES` | `5` | When the “closing soon” alert goes out |
+
+---
+
+## How it is put together
+
+```
+app/
+  main.py          FastAPI app, routing, error pages
+  models.py        the whole domain model
+  engine.py        bid validation, ranking, auto-extension, savings maths
+  scheduler.py     background clock: opens and closes auctions, time-based alerts
+  mailer.py        SMTP with a dev-outbox fallback, background delivery
+  notify.py        one function per event: in-app notification + email
+  reporting.py     both reports, as HTML data, CSV and PDF
+  help_content.py  every help string and the assistant's answers
+  security.py      password hashing, sessions, role guards
+  audit.py         the append-only trail
+  routers/         one module per area of the app
+  templates/       Jinja2 pages + the email template
+  static/          one stylesheet, one small script
+seed.py            demo data
+tests/             end-to-end walk through a full auction
+```
+
+Two design notes worth knowing:
+
+* **The engine is pure.** `engine.py` never touches HTTP; the routers translate its
+  `BidError` messages straight to the screen, which is why bidders get sentences like
+  *“Too high. The current lowest bid is ₹35.23 and you must go at least ₹0.50 below it.”*
+* **The assistant is offline.** `help_content.answer()` is a keyword matcher with no
+  dependencies. Replace that one function with an LLM call and nothing else changes.
+
+---
+
+## Tests
+
+```bash
+python tests/test_end_to_end.py      # or: python -m pytest -q
+```
+
+It builds a throwaway database and walks a whole auction: masters, inline create, publishing,
+the scheduler opening the auction, every bidding rule (ceiling, minimum and maximum decrement,
+not raising your own bid), visibility rules, withdrawal, messages, auto-extension, closing,
+a split award, over-award refusal, savings maths, all four report downloads, the audit trail and
+the email outbox — around sixty assertions.
+
+---
+
+## Deploying
+
+```bash
+docker build -t reversebid .
+docker run -p 8000:8000 --env-file .env -v $(pwd)/data:/app/data reversebid
+```
+
+Or anywhere that runs a Python web process:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+For more than one worker process, move the database to PostgreSQL
+(`RA_DATABASE_URL=postgresql+psycopg://…`) and run the scheduler in a single process, since each
+worker would otherwise run its own clock.
+
+Before going live: set `RA_SECRET_KEY`, set `RA_BASE_URL`, configure SMTP, and serve over HTTPS.
+
+## Licence
+
+MIT — see `LICENSE`.

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Approvals — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Approvals</h1>
+  <p class="sub">{{ rows|length }} auction(s) waiting for your decision.</p></div></div>
+
+{% if rows %}
+  {% for approval in rows %}
+  {% set a = approval.auction %}
+  <div class="card">
+    <div class="card-head"><div style="flex:1">
+      <div class="muted small mono">{{ a.reference }} · requested by {{ approval.requested_by.name }}
+        on {{ fmt_dt(approval.requested_at) }}</div>
+      <h3 style="margin:2px 0 0"><a href="/auctions/{{ a.id }}">{{ a.title }}</a></h3></div>
+      <span class="pill pending_approval">waiting</span></div>
+
+    <div class="grid g4" style="margin-bottom:12px">
+      <div class="stat"><div class="k">Items</div><div class="v mono">{{ a.lines|length }}</div></div>
+      <div class="stat"><div class="k">Invited bidders</div><div class="v mono">{{ a.participants|length }}</div></div>
+      <div class="stat"><div class="k">Baseline value</div><div class="v mono">{{ fmt_money(a.baseline_value) }}</div></div>
+      <div class="stat"><div class="k">Window</div><div class="v" style="font-size:.95rem">{{ fmt_dt(a.start_at, False) }}<br>to {{ fmt_dt(a.end_at, False) }}</div></div>
+    </div>
+
+    <form method="post" action="/approvals/{{ approval.id }}">
+      <div class="field"><label>Comments <span class="muted small">(the creator will see these)</span></label>
+        <input name="comments" placeholder="Optional — required in spirit if you reject or send back"></div>
+      <div class="btn-row">
+        <button class="btn good" name="decision" value="approve" type="submit">Approve &amp; invite bidders</button>
+        <button class="btn ghost" name="decision" value="rework" type="submit">Send back for rework</button>
+        <button class="btn danger" name="decision" value="reject" type="submit">Reject</button>
+        <a class="btn ghost" href="/auctions/{{ a.id }}">Look at the detail first</a>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="card"><div class="empty"><div class="big">✅</div>Nothing waiting for you.</div></div>
+{% endif %}
+
+{% if history %}
+<div class="card">
+  <div class="card-head"><h3>Recent decisions</h3></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Auction</th><th>Decision</th><th>Approver</th><th>Comments</th><th>When</th></tr></thead><tbody>
+    {% for approval in history %}
+      <tr><td><a href="/auctions/{{ approval.auction_id }}">{{ approval.auction.title }}</a></td>
+        <td><span class="pill {{ 'good' if approval.status.value == 'approved' else 'bad' if approval.status.value == 'rejected' else 'warn' }}">{{ approval.status.value }}</span></td>
+        <td>{{ approval.approver.name if approval.approver else '—' }}</td>
+        <td class="small">{{ approval.comments or '—' }}</td>
+        <td class="small">{{ fmt_dt(approval.acted_at, False) }}</td></tr>
+    {% endfor %}
+  </tbody></table></div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Alerts — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Alerts</h1>
+  <p class="sub">Everything the platform has told you. The same messages went to your email.</p></div>
+  <form method="post" action="/notifications/read-all"><button class="btn ghost" type="submit">Mark all as read</button></form>
+</div>
+
+{% if rows %}
+<div class="card">
+  {% for row in rows %}
+  <div style="display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);
+              {{ 'background:var(--brand-soft);margin:0 -18px;padding-left:18px;padding-right:18px' if not row.read_at }}">
+    <div style="flex:1">
+      <b>{% if row.link %}<a href="{{ row.link }}">{{ row.title }}</a>{% else %}{{ row.title }}{% endif %}</b>
+      <div class="muted small">{{ row.body }}</div>
+    </div>
+    <div class="muted small" style="white-space:nowrap">{{ fmt_dt(row.created_at, False) }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><div class="empty"><div class="big">🔔</div>No alerts yet.</div></div>
+{% endif %}
+{% endblock %}

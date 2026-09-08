@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Reports — {{ app_name }}{% endblock %}
+{% block wrapclass %}wide{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Reports</h1>
+  <p class="sub">Two reports, both downloadable as PDF or CSV.</p></div></div>
+
+<div class="card">
+  <div class="card-head"><h2>Report 1 — Total Savings</h2><span class="spacer"></span>
+    <span class="muted small">Across every auction in a period</span></div>
+
+  <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
+    <div><label for="date_from">From</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div><label for="date_to">To</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <label class="check" style="margin:0"><input type="checkbox" name="include_closed" value="1" {{ 'checked' if include_closed }}>
+      <span><span class="t">Include auctions not yet awarded</span>
+        <span class="d">Uses the lowest bid instead of the awarded price.</span></span></label>
+    <button class="btn ghost" type="submit">Run report</button>
+    <span class="spacer" style="flex:1"></span>
+    <a class="btn" href="/reports/savings.pdf?date_from={{ date_from }}&date_to={{ date_to }}&include_closed={{ '1' if include_closed else '' }}">Download PDF</a>
+    <a class="btn ghost" href="/reports/savings.csv?date_from={{ date_from }}&date_to={{ date_to }}&include_closed={{ '1' if include_closed else '' }}">Download CSV</a>
+  </form>
+
+  {% set t = data.totals %}
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="stat"><div class="k">Auctions</div><div class="v mono">{{ t.count }}</div></div>
+    <div class="stat"><div class="k">Baseline</div><div class="v mono">{{ fmt_money(t.baseline) }}</div></div>
+    <div class="stat"><div class="k">Final value</div><div class="v mono">{{ fmt_money(t.final) }}</div></div>
+    <div class="stat hero"><div class="k">Total savings</div><div class="v">{{ fmt_money(t.savings) }}</div>
+      <div class="h">{{ '%.1f'|format(t.savings_pct) }}% below baseline</div></div>
+  </div>
+
+  {% if data.rows %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Reference</th><th>Auction</th><th>Date</th><th class="num">Bidders</th><th class="num">Bids</th>
+      <th class="num">Baseline</th><th class="num">Final</th><th class="num">Savings</th><th class="num">%</th><th>Awarded to</th></tr></thead>
+    <tbody>
+    {% for row in data.rows %}
+      <tr><td class="mono small">{{ row.reference }}</td>
+        <td><a href="/reports/auction/{{ row.auction.id }}">{{ row.title }}</a></td>
+        <td class="small">{{ fmt_dt(row.date, False) }}</td>
+        <td class="num">{{ row.bidders }}</td><td class="num">{{ row.bids }}</td>
+        <td class="num mono">{{ fmt_money(row.baseline) }}</td>
+        <td class="num mono">{{ fmt_money(row.final) }}</td>
+        <td class="num mono"><b style="color:var(--good)">{{ fmt_money(row.savings) }}</b></td>
+        <td class="num mono">{{ '%.1f'|format(row.savings_pct) }}</td>
+        <td class="small">{{ row.awardees }}</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}
+    <div class="empty"><div class="big">📈</div>No awarded auctions in this period.
+      <div class="small">Try widening the dates, or tick “include auctions not yet awarded”.</div></div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Report 2 — Individual Auction Summary</h2><span class="spacer"></span>
+    <span class="muted small">Every bid, the highest and lowest price, savings and the awardee</span></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Reference</th><th>Auction</th><th>Status</th><th>Ended</th><th>Report</th></tr></thead><tbody>
+    {% for auction in auctions %}
+      <tr><td class="mono small">{{ auction.reference }}</td>
+        <td>{{ auction.title }}</td>
+        <td><span class="pill {{ auction.status.value }}">{{ auction.status.value }}</span></td>
+        <td class="small">{{ fmt_dt(auction.end_at, False) }}</td>
+        <td><div class="btn-row">
+          <a class="btn ghost sm" href="/reports/auction/{{ auction.id }}">View</a>
+          <a class="btn ghost sm" href="/reports/auction/{{ auction.id }}/export/pdf">PDF</a>
+          <a class="btn ghost sm" href="/reports/auction/{{ auction.id }}/export/csv">CSV</a></div></td></tr>
+    {% endfor %}
+    {% if not auctions %}<tr><td colspan="5" class="empty">No auctions to report on yet.</td></tr>{% endif %}
+  </tbody></table></div>
+</div>
+{% endblock %}

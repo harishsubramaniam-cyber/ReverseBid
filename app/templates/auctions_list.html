@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Auctions — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Auctions</h1>
+    <p class="sub">{{ rows|length }} auction(s){% if user.is_vendor %} you have been invited to{% endif %}.</p></div>
+  {% if user.is_buyer_side and not user.is_vendor %}<a class="btn" href="/auctions/new">+ New auction</a>{% endif %}
+</div>
+
+<form class="card tight" method="get" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+  <div style="flex:2;min-width:200px"><label for="q">Search</label>
+    <input id="q" type="search" name="q" value="{{ q }}" placeholder="Title or reference…"></div>
+  <div style="flex:1;min-width:160px"><label for="status">Status</label>
+    <select id="status" name="status"><option value="">All</option>
+      {% for s in statuses %}<option value="{{ s.value }}" {{ 'selected' if status == s.value }}>{{ s.value.replace('_',' ') }}</option>{% endfor %}
+    </select></div>
+  <button class="btn ghost" type="submit">Filter</button>
+</form>
+
+{% if rows %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Reference</th><th>Auction</th><th>Status</th><th>Window</th>
+    {% if user.is_vendor %}<th>Your rank</th>{% else %}<th class="num">Baseline</th><th class="num">Savings</th>{% endif %}
+    <th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    {% set a = row.auction %}
+    <tr>
+      <td class="mono small">{{ a.reference }}</td>
+      <td><a href="/auctions/{{ a.id }}"><b>{{ a.title }}</b></a>
+        <div class="muted small">{{ a.lines|length }} item(s){% if user.is_buyer_side %} · {{ a.participants|length }} bidder(s){% endif %}</div></td>
+      <td><span class="pill {{ a.status.value }}">{{ a.status.value.replace('_',' ') }}</span></td>
+      <td class="small">{{ fmt_dt(a.start_at, False) }}<br><span class="muted">to {{ fmt_dt(a.end_at, False) }}</span>
+        {% if a.status.value == 'live' %}<div class="clock small" data-deadline="{{ epoch(a.end_at) }}"></div>{% endif %}</td>
+      {% if user.is_vendor %}
+        <td>{% if row.my_rank %}<span class="rank {{ 'l1' if row.my_rank == 1 }}">L{{ row.my_rank }}</span>{% else %}<span class="muted small">not bid</span>{% endif %}</td>
+      {% else %}
+        <td class="num mono">{{ fmt_money(row.summary.baseline) }}</td>
+        <td class="num mono">{% if row.summary.savings > 0 %}<b style="color:var(--good)">{{ fmt_money(row.summary.savings) }}</b>
+          <div class="muted small">{{ '%.1f'|format(row.summary.savings_pct) }}%</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+      {% endif %}
+      <td><a class="btn ghost sm" href="/auctions/{{ a.id }}">Open</a></td>
+    </tr>
+  {% endfor %}
+  </tbody></table></div>
+{% else %}
+<div class="card"><div class="empty"><div class="big">📭</div>
+  <p>Nothing here yet.</p>
+  {% if user.is_buyer_side %}<a class="btn" href="/auctions/new">Create your first auction</a>{% endif %}</div></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Award {{ auction.reference }} — {{ app_name }}{% endblock %}
+{% block wrapclass %}wide{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow">
+  <div class="muted small mono">{{ auction.reference }}</div>
+  <h1>Award the business</h1>
+  <p class="sub">Each item is pre-filled with its lowest bidder. Change anything you like, or
+    split a line across several bidders.</p>
+</div>
+<a class="btn ghost" href="/auctions/{{ auction.id }}">Back to the auction</a></div>
+
+<div class="alert info">When you press <b>Confirm award</b>, winners get an email telling them what
+  they won, and everyone else gets a polite “not this time”. Nothing is sent until then.</div>
+
+<form method="post" action="/auctions/{{ auction.id }}/award"
+      data-confirm="Confirm the award and email every bidder?">
+{% for row in rows %}
+  {% set line = row.line %}
+  <div class="card">
+    <div class="card-head"><span class="li-num">{{ loop.index }}</span>
+      <div style="flex:1"><h3 style="margin:0">{{ row.label }}</h3>
+        <div class="muted small">{{ fmt_qty(line.qty) }} {{ line.unit.code if line.unit else 'unit(s)' }}
+          · starting price {{ fmt_money(line.starting_price) }} · baseline {{ fmt_money(line.baseline) }}</div></div>
+      <button type="button" class="btn ghost sm" onclick="addSplitRow({{ line.id }})">+ Split across another bidder</button>
+    </div>
+
+    {% if row.ranked %}
+    <div class="table-wrap" style="margin-bottom:10px"><table>
+      <thead><tr><th>Rank</th><th>Bidder</th><th class="num">Unit price</th><th class="num">Line total</th><th class="num">Saving</th></tr></thead>
+      <tbody>
+      {% for bid in row.ranked %}
+        <tr class="{{ 'is-best' if loop.index == 1 }}">
+          <td><span class="rank {{ 'l1' if loop.index == 1 }}">L{{ loop.index }}</span></td>
+          <td>{{ bid.vendor.name }}</td>
+          <td class="num mono">{{ fmt_money(bid.unit_price) }}</td>
+          <td class="num mono">{{ fmt_money(bid.total) }}</td>
+          <td class="num mono" style="color:var(--good)">{{ fmt_money(line.baseline - bid.total) }}</td></tr>
+      {% endfor %}
+      </tbody></table></div>
+
+    <div id="split-{{ line.id }}">
+      {% set existing = row.existing %}
+      {% for award in (existing if existing else [None]) %}
+      <div class="split-row row" style="align-items:flex-end;margin-bottom:8px">
+        <input type="hidden" name="award_line_id" value="{{ line.id }}">
+        <div style="flex:2"><label>Award to</label>
+          <select name="award_vendor_id">
+            <option value="">— nobody —</option>
+            {% for bid in row.ranked %}
+              <option value="{{ bid.vendor_id }}"
+                {% if award %}{{ 'selected' if award.vendor_id == bid.vendor_id }}
+                {% elif loop.first %}selected{% endif %}>
+                L{{ loop.index }} · {{ bid.vendor.name }} · {{ fmt_money(bid.unit_price) }}</option>
+            {% endfor %}
+          </select></div>
+        <div><label>Quantity</label>
+          <input type="number" step="any" min="0" name="award_qty"
+                 value="{{ award.qty if award else line.qty }}">
+          <p class="hint">{{ FIELD_HELP.award_qty }}</p></div>
+        <div><label>Unit price ({{ currency }})</label>
+          <input type="number" step="0.01" min="0" name="award_price"
+                 value="{{ award.unit_price if award else (row.best.unit_price if row.best else line.starting_price) }}">
+          <p class="hint">{{ FIELD_HELP.award_price }}</p></div>
+        <div style="flex:2"><label>Note <span class="muted small">(optional)</span></label>
+          <input name="award_note" value="{{ award.notes if award else '' }}"></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      <div class="empty small">Nobody bid on this item, so there is nothing to award.
+        <input type="hidden" name="award_line_id" value="{{ line.id }}">
+        <input type="hidden" name="award_vendor_id" value="">
+        <input type="hidden" name="award_qty" value="0">
+        <input type="hidden" name="award_price" value="0">
+        <input type="hidden" name="award_note" value=""></div>
+    {% endif %}
+  </div>
+{% endfor %}
+
+<div class="btn-row" style="position:sticky;bottom:10px;background:rgba(246,247,249,.92);padding:12px;border-radius:12px">
+  <button class="btn good" type="submit">Confirm award &amp; email everyone</button>
+  <a class="btn ghost" href="/auctions/{{ auction.id }}">Not yet</a>
+  <span class="muted small">Baseline {{ fmt_money(summary.baseline) }} · best bids
+    {{ fmt_money(summary.final_value) }}</span>
+</div>
+</form>
+{% endblock %}

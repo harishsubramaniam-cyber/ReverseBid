@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}My bidding — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow">
+  <h1>Hello, {{ user.name.split()[0] }}</h1>
+  <p class="sub">Everything you have been invited to. Lowest price wins — you can bid as often as you like.</p>
+</div></div>
+
+<div class="grid g4" style="margin-bottom:16px">
+  <div class="stat hero"><div class="k">Live right now</div><div class="v">{{ metrics.live }}</div>
+    <div class="h">{{ metrics.l1_now }} where you are currently lowest</div></div>
+  <div class="stat"><div class="k">Starting soon</div><div class="v mono">{{ metrics.upcoming }}</div>
+    <div class="h">You will be emailed when they open</div></div>
+  <div class="stat"><div class="k">Business won</div><div class="v mono">{{ fmt_money(metrics.won_value) }}</div>
+    <div class="h">{{ metrics.won_lines }} awarded line(s)</div></div>
+  <div class="stat"><div class="k">Bids placed</div><div class="v mono">{{ metrics.bids }}</div>
+    <div class="h">Across all auctions</div></div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Live now — bid before the clock stops</h3></div>
+  {% if live %}
+    {% for row in live %}
+    <div class="line-item">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <div style="flex:1;min-width:200px">
+          <a href="/auctions/{{ row.auction.id }}"><b>{{ row.auction.title }}</b></a>
+          <div class="muted small">{{ row.auction.reference }} · you have bid on
+            {{ row.lines_bid }} of {{ row.lines }} item(s)</div>
+        </div>
+        {% if row.best_rank %}
+          <span class="rank {{ 'l1' if row.best_rank == 1 }}">L{{ row.best_rank }}</span>
+        {% else %}<span class="pill warn">no bid yet</span>{% endif %}
+        <span class="clock" data-deadline="{{ epoch(row.auction.end_at) }}"></span>
+        <a class="btn sm" href="/auctions/{{ row.auction.id }}">Bid now</a>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty"><div class="big">⏳</div>Nothing live at the moment.
+      <div class="small">We email you the moment a buyer invites you.</div></div>
+  {% endif %}
+</div>
+
+{% if upcoming %}
+<div class="card">
+  <div class="card-head"><h3>Starting soon</h3></div>
+  {% for row in upcoming %}
+  <div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+    <div style="flex:1"><a href="/auctions/{{ row.auction.id }}">{{ row.auction.title }}</a>
+      <div class="muted small">Opens {{ fmt_dt(row.auction.start_at) }}</div></div>
+    <span class="pill scheduled">scheduled</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if finished %}
+<div class="card">
+  <div class="card-head"><h3>Finished</h3></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Auction</th><th>Status</th><th>Your best rank</th><th>Ended</th><th></th></tr></thead>
+    <tbody>
+    {% for row in finished %}
+      <tr><td><a href="/auctions/{{ row.auction.id }}">{{ row.auction.title }}</a></td>
+        <td><span class="pill {{ row.auction.status.value }}">{{ row.auction.status.value }}</span></td>
+        <td>{% if row.best_rank %}<span class="rank {{ 'l1' if row.best_rank == 1 }}">L{{ row.best_rank }}</span>{% else %}—{% endif %}</td>
+        <td class="small">{{ fmt_dt(row.auction.end_at, False) }}</td>
+        <td><a class="btn ghost sm" href="/auctions/{{ row.auction.id }}">View</a></td></tr>
+    {% endfor %}
+    </tbody></table></div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,4 @@
+<div class="chat-msg bot">{{ reply }}</div>
+{% if suggestions %}
+<div>{% for s in suggestions %}<span class="chip" onclick="askThis('{{ s|replace("'", "") }}')">{{ s }}</span>{% endfor %}</div>
+{% endif %}
