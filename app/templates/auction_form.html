@@ -62,15 +62,17 @@
 <!-- 2 ---------------------------------------------------------------------- -->
 <section class="step-card">
   <div class="head"><span class="n">2</span><h2>Items and quantities</h2><span class="spacer"></span>
-    <button type="button" class="linkbtn" onclick="openModal('m-item')">+ New item</button>
-    <span class="muted">·</span>
-    <button type="button" class="linkbtn" onclick="openModal('m-unit')">+ New unit</button>
+    <button type="button" class="btn ghost sm" onclick="openModal('m-item')">
+      <svg><use href="#i-plus"/></svg>Create a new item</button>
+    <button type="button" class="btn ghost sm" onclick="openModal('m-unit')">
+      <svg><use href="#i-plus"/></svg>Create a new unit</button>
   </div>
 
   <div class="alert info" style="margin-bottom:14px"><svg><use href="#i-info"/></svg>
-    <div>The <b>starting price</b> is your ceiling — the most you will pay per unit — and it is
-    <b>optional</b>. Leave it empty and bidders can open at any price; savings are then measured
-    from the highest bid you receive.</div></div>
+    <div>Buying something that is not in the list yet? Press <b>Create a new item</b> — it is
+    saved and added to this auction straight away. The <b>starting price</b> is your ceiling,
+    the most you will pay per unit, and it is <b>optional</b>: leave it empty and bidders open at
+    any price, with savings measured from the highest bid you receive.</div></div>
 
   <div id="line-rows">
     {% for line in line_rows %}
@@ -123,14 +125,23 @@
     </div>
     {% endif %}
   </div>
-  <button type="button" class="btn ghost sm" onclick="addLineRow()">
-    <svg><use href="#i-plus"/></svg>Add another item</button>
+  <div class="btn-row" style="margin-top:4px">
+    <button type="button" class="btn ghost" onclick="addLineRow()">
+      <svg><use href="#i-plus"/></svg>Add another row</button>
+    <button type="button" class="btn ghost" onclick="openModal('m-item')">
+      <svg><use href="#i-plus"/></svg>Create a new item</button>
+    <button type="button" class="btn ghost" onclick="openModal('m-unit')">
+      <svg><use href="#i-plus"/></svg>Create a new unit</button>
+    <span class="muted small" style="flex:1; min-width:200px">Use <b>Add another row</b> for an
+      item already in your list; <b>Create a new item</b> for one that is not.</span>
+  </div>
 </section>
 
 <!-- 3 ---------------------------------------------------------------------- -->
 <section class="step-card">
   <div class="head"><span class="n">3</span><h2>Who is invited to bid?</h2><span class="spacer"></span>
-    <button type="button" class="linkbtn" onclick="openModal('m-vendor')">+ New vendor</button></div>
+    <button type="button" class="btn ghost sm" onclick="openModal('m-vendor')">
+      <svg><use href="#i-plus"/></svg>Create a new vendor</button></div>
   <p class="hint" style="margin:0 0 12px">{{ FIELD_HELP.vendors }}</p>
 
   <div id="vendor-list" style="max-height:400px; overflow-y:auto">
@@ -239,16 +250,25 @@
 </section>
 
 <div class="actionbar">
-  <button class="btn lg" type="submit">{{ 'Save changes' if auction else 'Save as draft' }}</button>
-  <a class="btn ghost" href="{{ '/auctions/' ~ auction.id if auction else '/auctions' }}">Cancel</a>
-  <span class="muted small" style="flex:1">Nothing is emailed until you press Publish on the next screen.</span>
+  <button class="btn ghost lg" type="submit" name="action" value="draft">
+    {{ 'Save changes' if auction else 'Save as draft' }}</button>
+  {% if not auction or auction.status.value == 'draft' %}
+  <button class="btn lg" type="submit" name="action" value="publish" id="publish-btn">
+    <svg><use href="#i-spark"/></svg>Publish &amp; invite bidders</button>
+  {% endif %}
+  <a class="btn ghost lg" href="{{ '/auctions/' ~ auction.id if auction else '/auctions' }}">Cancel</a>
+  <span class="muted small" style="flex:1; min-width:200px">
+    <b>Save as draft</b> keeps it private. <b>Publish</b> emails every invited bidder — and opens
+    bidding at once if the opening time has already passed.</span>
 </div>
 </form>
 
 <!-- inline create ---------------------------------------------------------- -->
 <div class="modal" id="m-vendor"><div class="panel">
-  <h3>New vendor</h3><p class="muted small">A name and an email is all we need.</p>
-  <form data-quick action="/masters/quick/vendor" data-target="#vendor-list">
+  <h3>Create a new vendor</h3>
+  <p class="muted small">Saved to your vendor list <b>and invited to this auction</b>.
+    A name and an email is all we need.</p>
+  <form data-quick data-mode="vendor" action="/masters/quick/vendor">
     <div class="field"><label>Company name</label><input name="name" required>
       <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
     <div class="field"><label>Main email</label><input type="email" name="email" required>
@@ -260,8 +280,10 @@
   </form></div></div>
 
 <div class="modal" id="m-item"><div class="panel">
-  <h3>New item</h3><p class="muted small">Just a name for now — the rest can wait.</p>
-  <form data-quick action="/masters/quick/item" data-target=".sel-item">
+  <h3>Create a new item</h3>
+  <p class="muted small">It is saved to your item list <b>and added to this auction</b> as a new
+    row. Just a name is enough — the rest can wait.</p>
+  <form data-quick data-mode="item" action="/masters/quick/item">
     <div class="field"><label>Item name</label><input name="name" required>
       <p class="hint">{{ FIELD_HELP.item_name }}</p></div>
     <div class="field"><label>Default unit <span class="optional">(optional)</span></label>
@@ -272,8 +294,9 @@
   </form></div></div>
 
 <div class="modal" id="m-unit"><div class="panel">
-  <h3>New unit</h3>
-  <form data-quick action="/masters/quick/unit" data-target=".sel-unit">
+  <h3>Create a new unit</h3>
+  <p class="muted small">A short code you measure in, like KG or NOS.</p>
+  <form data-quick data-mode="unit" action="/masters/quick/unit">
     <div class="field"><label>Short code</label><input name="code" required placeholder="KG">
       <p class="hint">{{ FIELD_HELP.unit_code }}</p></div>
     <div class="field"><label>Full name <span class="optional">(optional)</span></label>
@@ -345,6 +368,15 @@
       showProblem(problems[0][0], problems[0][1]);
     }
   });
+
+  var publishBtn = document.getElementById("publish-btn");
+  if (publishBtn) {
+    publishBtn.addEventListener("click", function (e) {
+      if (!window.confirm("Publish this auction? Every invited bidder will be emailed.")) {
+        e.preventDefault();
+      }
+    });
+  }
 
   function showProblem(el, message) {
     document.querySelectorAll(".field.bad").forEach(function (f) { f.classList.remove("bad"); });

@@ -206,6 +206,7 @@ Two design notes worth knowing:
 ```bash
 python tests/test_end_to_end.py      # the happy path, end to end
 python tests/test_hostile.py         # every way a person can get it wrong
+python tests/test_browser.py         # the screens themselves, in a real browser
 ```
 
 It builds a throwaway database and walks a whole auction: masters, inline create, publishing,

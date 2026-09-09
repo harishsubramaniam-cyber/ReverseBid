@@ -212,9 +212,16 @@ async def create_auction(request: Request, user: User = Depends(buyer_only),
                actor=user, auction_id=auction.id, ip=client_ip(request),
                detail={"title": auction.title, "lines": len(lines)})
         db.commit()
+        if form.get("action") == "publish":
+            message = _publish_now(db, auction, user, request)
+            return redirect(f"/auctions/{auction.id}", message)
     except FormError as exc:
         db.rollback()
         return _form_screen(request, db, user, None, error=exc, form=form)
+    except ActionError as exc:
+        # Saved fine, but could not go out — say so on the auction itself.
+        return redirect(f"/auctions/{auction.id}",
+                        f"Saved as a draft, but not published: {exc}", kind="error")
     return redirect(f"/auctions/{auction.id}",
                     "Saved as a draft. Check it over, then press Publish to invite your bidders.")
 
@@ -360,48 +367,45 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
                                                    "start": auction.start_at.isoformat(),
                                                    "end": auction.end_at.isoformat()}})
         db.commit()
+        if form.get("action") == "publish":
+            message = _publish_now(db, auction, user, request)
+            return redirect(f"/auctions/{auction.id}", "Changes saved. " + message)
     except FormError as exc:
         db.rollback()
         db.expire_all()
         return _form_screen(request, db, user, db.get(Auction, auction_id),
                             error=exc, form=form)
+    except ActionError as exc:
+        return redirect(f"/auctions/{auction.id}",
+                        f"Changes saved, but not published: {exc}", kind="error")
     return redirect(f"/auctions/{auction.id}", "Changes saved.")
 
 
 # ------------------------------------------------------------------ lifecycle
-@router.post("/{auction_id}/publish")
-def publish(auction_id: int, request: Request, start_now: str = Form(""),
-            user: User = Depends(buyer_only), db: Session = Depends(get_db)):
-    """Publish straight to the bidders. No approval step, by design.
+def _publish_now(db: Session, auction: Auction, user: User, request: Request,
+                 start_now: bool = False) -> str:
+    """Publish to the bidders. Raises ActionError with a plain-language reason.
 
-    If the opening time has already passed — or the buyer asked to start now —
-    the auction opens immediately rather than waiting for the next clock tick.
+    No approval step, by design. If the opening time has already passed — or the
+    buyer asked to start now — bidding opens immediately rather than waiting for
+    the next clock tick.
     """
-    auction = db.get(Auction, auction_id)
-    if not auction:
-        raise HTTPException(404, "That auction does not exist. It may have been deleted.")
-    try:
-        if auction.status in (AuctionStatus.LIVE, AuctionStatus.SCHEDULED):
-            raise ActionError("This auction has already been published.")
-        if auction.status in (AuctionStatus.CLOSED, AuctionStatus.AWARDED,
-                              AuctionStatus.CANCELLED):
-            raise ActionError("This auction has finished, so it cannot be published again.")
-        if not _participants(db, auction):
-            raise ActionError("Invite at least one bidder before publishing. "
-                              "Use Edit to tick the vendors you want.")
-        if not auction.lines:
-            raise ActionError("Add at least one item before publishing.")
-    except ActionError as exc:
-        return redirect(f"/auctions/{auction.id}", str(exc), kind="error")
+    if auction.status in (AuctionStatus.LIVE, AuctionStatus.SCHEDULED):
+        raise ActionError("This auction has already been published.")
+    if auction.status in (AuctionStatus.CLOSED, AuctionStatus.AWARDED, AuctionStatus.CANCELLED):
+        raise ActionError("This auction has finished, so it cannot be published again.")
+    if not _participants(db, auction):
+        raise ActionError("Invite at least one bidder before publishing.")
+    if not auction.lines:
+        raise ActionError("Add at least one item before publishing.")
 
     now = datetime.utcnow()
+    going_live = start_now or auction.start_at <= now
+    if going_live and auction.end_at <= now:
+        raise ActionError("The closing time is already in the past. Set a closing time in the "
+                          "future, then publish.")
     auction.published_at = now
-    going_live = start_now == "on" or auction.start_at <= now
     if going_live:
-        if auction.end_at <= now:
-            return redirect(f"/auctions/{auction.id}",
-                            "The closing time is already in the past. Edit the auction and set "
-                            "a closing time in the future, then publish.", kind="error")
         auction.start_at = min(auction.start_at, now)
         auction.status = AuctionStatus.LIVE
         auction.started_at = now
@@ -419,8 +423,20 @@ def publish(auction_id: int, request: Request, start_now: str = Form(""),
     extra = f" A copy went to {copied - 1} colleague(s)." if copied > 1 else ""
     opening = ("Bidding is open now." if going_live
                else f"Bidding opens {fmt_dt(auction.start_at)}.")
-    return redirect(f"/auctions/{auction.id}",
-                    f"Published — {sent} bidder contact(s) invited by email. {opening}{extra}")
+    return f"Published — {sent} bidder contact(s) invited by email. {opening}{extra}"
+
+
+@router.post("/{auction_id}/publish")
+def publish(auction_id: int, request: Request, start_now: str = Form(""),
+            user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+    auction = db.get(Auction, auction_id)
+    if not auction:
+        raise HTTPException(404, "That auction does not exist. It may have been deleted.")
+    try:
+        message = _publish_now(db, auction, user, request, start_now == "on")
+    except ActionError as exc:
+        return redirect(f"/auctions/{auction.id}", str(exc), kind="error")
+    return redirect(f"/auctions/{auction.id}", message)
 
 
 @router.post("/{auction_id}/go-live")

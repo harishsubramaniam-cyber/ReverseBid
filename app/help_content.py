@@ -71,6 +71,14 @@ PAGE_HELP = {
             ("What should I put as the starting price?",
              "The most you would pay per unit today — often last year's price. Set it too low and "
              "nobody can bid."),
+            ("An item I buy is not in the list.",
+             "Press **Create a new item**. It is saved to your item list and added to this "
+             "auction as a new row, so you can create several one after another. Units work "
+             "the same way."),
+            ("What is the difference between Save as draft and Publish?",
+             "Save as draft keeps the auction private — nobody is told about it, and you can "
+             "come back and change anything. Publish emails every invited bidder, and opens "
+             "bidding immediately if the opening time has already passed."),
             ("Do I have to invite vendors?",
              "Yes. Only invited vendors can see the auction, and each gets an email when you publish."),
             ("Can I choose exactly who gets the emails?",

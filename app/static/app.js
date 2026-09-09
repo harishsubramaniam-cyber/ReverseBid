@@ -156,11 +156,12 @@
   };
 
   // ------------------------------------------- inline (Odoo-style) create
+  // Whatever is created here must end up ON the auction, not merely in the
+  // master list: a buyer who creates three items expects three rows.
   document.addEventListener("submit", function (e) {
     var form = e.target;
     if (!form.matches || !form.matches("form[data-quick]")) return;
     e.preventDefault();
-    var target = form.dataset.target;
     fetch(form.action, { method: "POST", body: new FormData(form) })
       .then(function (r) {
         return r.json().then(function (data) {
@@ -169,35 +170,82 @@
         });
       })
       .then(function (data) {
-        var picked = false;
-        $$(target).forEach(function (el) {
-          if (el.tagName === "SELECT") {
-            el.add(new Option(data.label, data.id, false, false));
-            // Only fill the FIRST empty dropdown. Selecting it everywhere would
-            // silently re-point item rows the buyer had already chosen.
-            if (!picked && !el.value) { el.value = data.id; picked = true; }
-          } else if (el.tagName === "DIV") {
-            var row = document.createElement("div");
-            row.className = "vendor-row";
-            row.innerHTML =
-              '<label class="check" style="margin-bottom:0">' +
-              '<input type="checkbox" name="vendor_ids" value="' + data.id + '" checked>' +
-              '<span><span class="t"></span><span class="d"></span></span></label>' +
-              '<div class="vendor-override"><input type="text" name="notify_emails_' +
-              data.id + '" placeholder="Send this auction to a different address (optional)">' +
-              "</div>";
-            row.querySelector(".t").textContent = data.label;
-            row.querySelector(".d").textContent = "Emails go to " + (data.emails || "");
-            el.prepend(row);
-            picked = true;
-          }
-        });
-        form.reset();
-        window.closeModal();
-        toast(picked ? "Saved and selected." : "Saved — pick it from the list.");
+        var mode = form.dataset.mode;                  // item | unit | vendor
+        if (mode === "vendor") return addVendor(data);
+        if (mode === "unit") return addUnit(data);
+        return addItem(data);
       })
       .catch(function (err) { toast(err.message || "Could not save that.", true); });
   });
+
+  // Anything created during this visit has to be replayed into rows added
+  // later: those rows are cloned from a <template> rendered when the page
+  // loaded, so they know nothing about it.
+  var createdItems = [], createdUnits = [];
+
+  function optionsFor(select, made) {
+    var have = {};
+    Array.prototype.forEach.call(select.options, function (o) { have[o.value] = true; });
+    made.forEach(function (m) {
+      if (!have[m.id]) select.add(new Option(m.label, m.id));
+    });
+  }
+  window.replayCreated = function (row) {
+    $$(".sel-item", row).forEach(function (sel) { optionsFor(sel, createdItems); });
+    $$(".sel-unit", row).forEach(function (sel) { optionsFor(sel, createdUnits); });
+  };
+
+  function addItem(data) {
+    createdItems.push({ id: String(data.id), label: data.label });
+    $$(".sel-item").forEach(function (sel) { optionsFor(sel, createdItems); });
+
+    var target = $$(".sel-item").filter(function (sel) { return !sel.value; })[0];
+    if (!target) {
+      // Every row is already spoken for, so give the new item a row of its own.
+      window.addLineRow();
+      var selects = $$(".sel-item");
+      target = selects[selects.length - 1];
+    }
+    target.value = String(data.id);
+    if (data.unit_id) {
+      var unit = target.closest(".item-row").querySelector(".sel-unit");
+      if (unit && !unit.value) unit.value = String(data.unit_id);
+    }
+    window.closeModal();
+    var row = target.closest(".item-row");
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    var qty = row.querySelector("[name=line_qty]");
+    if (qty) qty.focus();
+    toast("“" + data.label + "” added to this auction. Now set the quantity.");
+  }
+
+  function addUnit(data) {
+    createdUnits.push({ id: String(data.id), label: data.label });
+    $$(".sel-unit").forEach(function (sel) { optionsFor(sel, createdUnits); });
+    var target = $$(".sel-unit").filter(function (sel) { return !sel.value; })[0];
+    if (target) target.value = String(data.id);
+    window.closeModal();
+    toast(target ? "Unit “" + data.label + "” created and selected."
+                 : "Unit “" + data.label + "” created — pick it on any row.");
+  }
+
+  function addVendor(data) {
+    var list = document.getElementById("vendor-list");
+    if (!list) return;
+    var row = document.createElement("div");
+    row.className = "vendor-row";
+    row.innerHTML =
+      '<label class="check" style="margin-bottom:0">' +
+      '<input type="checkbox" name="vendor_ids" value="' + data.id + '" checked>' +
+      '<span><span class="t"></span><span class="d"></span></span></label>' +
+      '<div class="vendor-override"><input type="text" name="notify_emails_' + data.id +
+      '" placeholder="Send this auction to a different address (optional)"></div>';
+    row.querySelector(".t").textContent = data.label;
+    row.querySelector(".d").textContent = "Emails go to " + (data.emails || "");
+    list.prepend(row);
+    window.closeModal();
+    toast("“" + data.label + "” added and invited.");
+  }
 
   // ---------------------------------------------------------------- toast
   function toast(message, bad) {
@@ -217,6 +265,8 @@
     var template = document.getElementById("line-template");
     if (!body || !template) return;
     body.appendChild(template.content.cloneNode(true));
+    var rows = $$("#line-rows .item-row");
+    if (window.replayCreated) window.replayCreated(rows[rows.length - 1]);
     renumberLines();
   };
   window.removeLineRow = function (btn) {
