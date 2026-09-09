@@ -24,7 +24,6 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 | Role     | Email               | Sees                                             |
 | -------- | ------------------- | ------------------------------------------------ |
 | Buyer    | `buyer@demo.in`     | Dashboard, auctions, masters, reports, outbox     |
-| Approver | `approver@demo.in`  | The approvals queue                               |
 | Bidder   | `vendor1@demo.in` … `vendor4@demo.in` | Their invitations and the bidding screen |
 
 ---
@@ -44,7 +43,8 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 **2 — The auction engine**
 
 * Creation and scheduling with editable start/end times until bidding opens.
-* Starting price as a **ceiling** — no bid may sit above it.
+* Starting price as a **ceiling** — no bid may sit above it — and it is **optional**: leave it
+  empty and bidders open at any price, with savings measured from the highest bid received.
 * Live rank (L1, L2, L3…) and lowest-bid visibility, each switchable per auction.
 * **Minimum decrement** (how much lower each bid must be) and **maximum decrement**
   (the biggest drop allowed in one step), as a fixed amount or a percentage.
@@ -55,9 +55,11 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 
 **3 — Award**
 
-* Line-item award, splittable across several vendors with per-vendor quantity and price.
-* Awards default to the winning bid and are recorded against the auction; over-awarding a line
-  is refused.
+* **One bidder per item, for the whole quantity.** Different items can go to different bidders,
+  or the whole auction to one — one click fills every line with the same supplier — but a single
+  item is never carved up between two suppliers.
+* Every line is pre-set to its L1; change the winner, change the price, or leave a line
+  unawarded.
 
 **4 — Reports and dashboard**
 
@@ -80,8 +82,12 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 
 * Private conversations between each bidder and the auction creator.
 * An append-only audit trail on every action, visible on each auction.
-* Approval / rejection / rework workflow before an auction may go live.
+* Publish goes straight to the bidders — no approval step. A future auction publishes as
+  *scheduled* and can be opened early with **Start bidding now**; if the opening time has already
+  passed, publishing opens it immediately.
 * Withdraw a bid, edit an auction before it opens, cancel with a reason at any time.
+* **Every failure is explained on the screen it happened on**, in plain words, with what you
+  typed still in the boxes — never a raw error page or a wall of JSON.
 
 ---
 
@@ -173,6 +179,7 @@ app/
   migrate.py       adds any new columns to an existing database on startup
   security.py      password hashing, sessions, role guards
   audit.py         the append-only trail
+  errors.py        the two user-facing failure types, so routers can explain themselves
   routers/         one module per area of the app
   templates/       Jinja2 pages + the email template
   static/          one stylesheet, one small script

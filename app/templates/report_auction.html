@@ -31,13 +31,13 @@
     {% for entry in data.lines %}
       <tr><td>{{ entry.label }}</td>
         <td class="num mono">{{ fmt_qty(entry.line.qty) }}</td>
-        <td class="num mono">{{ fmt_money(entry.line.starting_price) }}</td>
+        <td class="num mono">{% if entry.line.has_ceiling %}{{ fmt_money(entry.line.starting_price) }}{% else %}<span class="muted">no ceiling</span>{% endif %}</td>
         <td class="num mono">{{ fmt_money(entry.highest.unit_price) if entry.highest else '—' }}</td>
         <td class="num mono"><b>{{ fmt_money(entry.lowest.unit_price) if entry.lowest else '—' }}</b></td>
         <td class="num mono" style="color:var(--good)">{{ fmt_money(entry.result.savings) }}</td>
         <td class="small">{% for award in entry.awards %}{{ award.vendor.name }}
           ({{ fmt_qty(award.qty) }} @ {{ fmt_money(award.unit_price) }}){% if not loop.last %}<br>{% endif %}
-          {% else %}—{% endfor %}</td></tr>
+          {% else %}<span class="muted">not awarded</span>{% endfor %}</td></tr>
     {% endfor %}
     </tbody></table></div>
 </div>

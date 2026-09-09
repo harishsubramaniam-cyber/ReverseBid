@@ -62,6 +62,7 @@ def auction_summary_report(db: Session, auction: Auction) -> dict:
             "line": line, "label": engine.line_label(line), "result": result,
             "history": history, "awards": awards,
             "highest": result["highest"], "lowest": result["lowest"],
+            "baseline": engine.line_baseline(db, line),
         })
     return {"auction": auction, "summary": summary, "lines": lines,
             "awards": summary["awards"]}
@@ -111,7 +112,7 @@ def auction_csv(db: Session, data: dict) -> bytes:
         awards = entry["awards"]
         writer.writerow([
             entry["label"], fmt_qty(line.qty), line.unit.code if line.unit else "",
-            f"{line.starting_price:.2f}",
+            f"{line.starting_price:.2f}" if line.has_ceiling else "no ceiling",
             f"{entry['highest'].unit_price:.2f}" if entry["highest"] else "",
             f"{entry['lowest'].unit_price:.2f}" if entry["lowest"] else "",
             f"{entry['result']['savings']:.2f}",
@@ -256,7 +257,7 @@ def auction_pdf(data: dict) -> bytes:
         line, awards = entry["line"], entry["awards"]
         rows.append([
             Paragraph(entry["label"], st["cell"]), fmt_qty(line.qty),
-            fmt_money(line.starting_price, False),
+            fmt_money(line.starting_price, False) if line.has_ceiling else "—",
             fmt_money(entry["highest"].unit_price, False) if entry["highest"] else "—",
             fmt_money(entry["lowest"].unit_price, False) if entry["lowest"] else "—",
             fmt_money(entry["result"]["savings"], False),

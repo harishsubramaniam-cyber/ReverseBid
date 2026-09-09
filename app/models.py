@@ -182,7 +182,7 @@ class Auction(Base):
     # ---- derived values
     @property
     def baseline_value(self) -> float:
-        return sum(l.qty * l.starting_price for l in self.lines)
+        return sum(l.qty * (l.starting_price or 0.0) for l in self.lines)
 
     @property
     def is_live(self) -> bool:
@@ -201,7 +201,9 @@ class AuctionLine(Base):
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     unit_id = Column(Integer, ForeignKey("units.id"), nullable=True)
     qty = Column(Float, default=1.0)
-    starting_price = Column(Float, nullable=False)   # per-unit CEILING
+    #: Per-unit CEILING. Optional - leave it empty and bidders may open at any
+    #: price; savings are then measured from the highest bid received.
+    starting_price = Column(Float, nullable=True)
     specification = Column(Text, default="")
 
     auction = relationship("Auction", back_populates="lines")
@@ -209,8 +211,14 @@ class AuctionLine(Base):
     unit = relationship("Unit")
 
     @property
+    def has_ceiling(self) -> bool:
+        return self.starting_price is not None and self.starting_price > 0
+
+    @property
     def baseline(self) -> float:
-        return self.qty * self.starting_price
+        """Budget for this line. Zero when no ceiling was set - use
+        ``engine.line_baseline`` where bids should stand in for it."""
+        return self.qty * (self.starting_price or 0.0)
 
 
 class Participant(Base):

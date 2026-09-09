@@ -13,15 +13,24 @@ router = APIRouter(prefix="/auctions")
 
 
 @router.post("/{auction_id}/bid")
-def post_bid(auction_id: int, request: Request, line_id: int = Form(...),
-             unit_price: float = Form(...), note: str = Form(""),
+def post_bid(auction_id: int, request: Request, line_id: str = Form(""),
+             unit_price: str = Form(""), note: str = Form(""),
              user: User = Depends(vendor_only), db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    line = db.get(AuctionLine, line_id)
+    line = db.get(AuctionLine, int(line_id)) if line_id.isdigit() else None
     if not auction or not line or line.auction_id != auction.id:
         raise HTTPException(404, "That item is not part of this auction.")
+    if not unit_price.strip():
+        return redirect(f"/auctions/{auction_id}",
+                        "Type a price before pressing Place bid.", kind="error")
     try:
-        bid = place_bid(db, auction, line, user, unit_price, note, ip=client_ip(request))
+        price = float(unit_price)
+    except ValueError:
+        return redirect(f"/auctions/{auction_id}",
+                        f"“{unit_price}” is not a price. Use digits only, like 970.50.",
+                        kind="error")
+    try:
+        bid = place_bid(db, auction, line, user, price, note, ip=client_ip(request))
     except BidError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
     from ..engine import vendor_rank

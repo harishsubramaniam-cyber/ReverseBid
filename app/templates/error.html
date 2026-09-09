@@ -1,13 +1,19 @@
 {% extends "base.html" %}
-{% block title %}{{ code }} — {{ app_name }}{% endblock %}
+{% block title %}{{ title or 'Something went wrong' }} — {{ app_name }}{% endblock %}
 {% block content %}
-<div class="card" style="max-width:560px;margin:8vh auto;text-align:center">
-  <div style="font-size:2.4rem">{{ '🔒' if code == 403 else '🧭' }}</div>
-  <h1>{{ 'You do not have access' if code == 403 else 'We could not find that' }}</h1>
-  <p class="muted">{{ message }}</p>
-  <div class="btn-row" style="justify-content:center">
-    <a class="btn" href="/">Back to the dashboard</a>
-    <a class="btn ghost" href="/auctions">See auctions</a>
+<div class="card" style="max-width:560px; margin:7vh auto; text-align:center; padding:32px">
+  <div class="empty" style="padding:0">
+    <div class="icon" style="width:60px;height:60px">
+      <svg style="width:28px;height:28px"><use href="{{ '#i-alert' if code >= 500 else '#i-info' }}"/></svg>
+    </div>
+    <h1 style="margin-bottom:8px">{{ title or 'Something went wrong' }}</h1>
+    <p style="color:var(--ink-2)">{{ message }}</p>
   </div>
+  <div class="btn-row" style="justify-content:center; margin-top:18px">
+    <button class="btn ghost" type="button" onclick="history.back()">Go back</button>
+    <a class="btn" href="/">Dashboard</a>
+    <a class="btn ghost" href="/auctions">Auctions</a>
+  </div>
+  <p class="muted tiny" style="margin-top:16px">Reference: {{ code }}</p>
 </div>
 {% endblock %}

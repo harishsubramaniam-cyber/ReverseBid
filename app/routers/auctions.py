@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from .. import audit, engine, notify
 from ..audit import record
+from ..errors import ActionError, FormError
 from ..db import get_db
 from ..emails_util import EmailError, describe, normalise, parse as parse_emails, validate
 from ..models import (Approval, ApprovalStatus, Auction, AuctionLine, AuctionStatus, Award, Bid,
                       DecrementType, Item, Message, Participant, Unit, User, Vendor)
 from ..security import buyer_only, current_user
-from ..utils import alias_for, from_local_string
+from ..utils import alias_for, fmt_dt, from_local_string
 from ..web import client_ip, redirect, render
 
 router = APIRouter(prefix="/auctions")
@@ -44,6 +45,7 @@ def visible_auction(db: Session, auction_id: int, user: User) -> Auction:
 
 
 def parse_lines(form, db: Session) -> list[dict]:
+    """Read the item rows. The starting price is optional; everything else is not."""
     items = form.getlist("line_item_id")
     units = form.getlist("line_unit_id")
     qtys = form.getlist("line_qty")
@@ -53,23 +55,40 @@ def parse_lines(form, db: Session) -> list[dict]:
     for index, item_id in enumerate(items):
         if not item_id:
             continue
+        position = len(rows) + 1
+        raw_qty = (qtys[index] if index < len(qtys) else "").strip()
+        raw_price = (prices[index] if index < len(prices) else "").strip()
         try:
-            qty = float(qtys[index] or 0)
-            price = float(prices[index] or 0)
+            qty = float(raw_qty or 0)
         except ValueError:
-            raise HTTPException(400, "Quantity and starting price must be numbers.")
+            raise FormError(f"Item {position}: the quantity “{raw_qty}” is not a number.",
+                            "line_qty")
         if qty <= 0:
-            raise HTTPException(400, "Every item needs a quantity greater than zero.")
-        if price <= 0:
-            raise HTTPException(400, "Every item needs a starting price greater than zero.")
-        if not db.get(Item, int(item_id)):
-            raise HTTPException(400, "One of the items no longer exists.")
+            raise FormError(f"Item {position} needs a quantity greater than zero.", "line_qty")
+
+        price = None
+        if raw_price:
+            try:
+                price = float(raw_price)
+            except ValueError:
+                raise FormError(f"Item {position}: the starting price “{raw_price}” is not a "
+                                "number. Leave it empty if you do not want a ceiling.",
+                                "line_price")
+            if price <= 0:
+                raise FormError(f"Item {position}: a starting price has to be more than zero. "
+                                "Leave it empty if you do not want a ceiling at all.",
+                                "line_price")
+        item = db.get(Item, int(item_id))
+        if not item:
+            raise FormError(f"Item {position} no longer exists. Pick a different one.",
+                            "line_item_id")
         rows.append({"item_id": int(item_id),
                      "unit_id": int(units[index]) if index < len(units) and units[index] else None,
                      "qty": qty, "starting_price": price,
                      "specification": specs[index] if index < len(specs) else ""})
     if not rows:
-        raise HTTPException(400, "Add at least one item to the auction.")
+        raise FormError("Add at least one item — an auction needs something to bid on.",
+                        "line_item_id")
     return rows
 
 
@@ -112,65 +131,148 @@ def _my_rank(db: Session, auction: Auction, user: User):
 
 
 # ------------------------------------------------------------------ create
+def _prefill(form) -> dict:
+    """Everything the person typed, shaped the way the form template reads it,
+    so a rejected submission comes back filled in rather than blank."""
+    items = form.getlist("line_item_id")
+    lines = []
+    for index, item_id in enumerate(items):
+        pick = lambda name, i=index: (form.getlist(name)[i]
+                                      if i < len(form.getlist(name)) else "")
+        lines.append({"item_id": item_id, "unit_id": pick("line_unit_id"),
+                      "qty": pick("line_qty"), "starting_price": pick("line_price"),
+                      "specification": pick("line_spec")})
+    return {
+        "title": form.get("title", ""), "description": form.get("description", ""),
+        "terms": form.get("terms", ""), "start_at": form.get("start_at", ""),
+        "end_at": form.get("end_at", ""), "cc_emails": form.get("cc_emails", ""),
+        "decrement_type": form.get("decrement_type", "absolute"),
+        "min_decrement": form.get("min_decrement", ""),
+        "max_decrement": form.get("max_decrement", ""),
+        "extend_trigger_minutes": form.get("extend_trigger_minutes", ""),
+        "extend_by_minutes": form.get("extend_by_minutes", ""),
+        "max_extensions": form.get("max_extensions", ""),
+        "show_rank": form.get("show_rank") == "on",
+        "show_lowest_bid": form.get("show_lowest_bid") == "on",
+        "hide_bidder_names": form.get("hide_bidder_names") == "on",
+        "auto_extend": form.get("auto_extend") == "on",
+        "lines": lines,
+        "vendor_ids": [int(v) for v in form.getlist("vendor_ids") if v],
+        "overrides": {int(v): form.get(f"notify_emails_{v}", "")
+                      for v in form.getlist("vendor_ids") if v},
+    }
+
+
+def _form_screen(request: Request, db: Session, user: User, auction: Auction | None,
+                 *, error: FormError | None = None, form=None):
+    """The create/edit screen, with an error banner and the typed values kept."""
+    context = form_context(db)
+    start = datetime.utcnow() + timedelta(hours=1)
+    context.update({
+        "auction": auction,
+        "default_start": start, "default_end": start + timedelta(hours=2),
+        "lines": auction.lines if auction else [],
+        "selected_vendors": [p.vendor_id for p in auction.participants] if auction else [],
+        "overrides": {p.vendor_id: p.notify_emails for p in auction.participants} if auction else {},
+        "prefill": _prefill(form) if form is not None else None,
+        "error": error.message if error else "",
+        "error_field": error.field if error else "",
+    })
+    return render(request, "auction_form.html", context, user=user, db=db,
+                  help_key="auction_new", status_code=200)
+
+
 @router.get("/new")
 def new_auction(request: Request, user: User = Depends(buyer_only),
                 db: Session = Depends(get_db)):
-    start = datetime.utcnow() + timedelta(hours=1)
-    context = form_context(db)
-    context.update({"auction": None, "default_start": start, "overrides": {},
-                    "default_end": start + timedelta(hours=2), "lines": []})
-    return render(request, "auction_form.html", context, user=user, db=db,
-                  help_key="auction_new")
+    return _form_screen(request, db, user, None)
 
 
 @router.post("/new")
 async def create_auction(request: Request, user: User = Depends(buyer_only),
                          db: Session = Depends(get_db)):
     form = await request.form()
-    auction = Auction(reference=next_reference(db), creator_id=user.id,
-                      title=(form.get("title") or "").strip(),
-                      description=form.get("description", ""), terms=form.get("terms", ""))
-    if not auction.title:
-        raise HTTPException(400, "Give the auction a title so people know what it is.")
-    _apply_settings(auction, form)
-    lines = parse_lines(form, db)
-    db.add(auction)
-    db.flush()
-    for row in lines:
-        db.add(AuctionLine(auction_id=auction.id, **row))
-    _sync_participants(db, auction, form)
-    record(db, action="auction.create", entity_type="auction", entity_id=auction.id, actor=user,
-           auction_id=auction.id, ip=client_ip(request),
-           detail={"title": auction.title, "lines": len(lines)})
-    db.commit()
+    try:
+        title = (form.get("title") or "").strip()
+        if not title:
+            raise FormError("Give the auction a title, so bidders know what it is for.", "title")
+        auction = Auction(reference=next_reference(db), creator_id=user.id, title=title,
+                          description=form.get("description", ""), terms=form.get("terms", ""))
+        _apply_settings(auction, form)
+        lines = parse_lines(form, db)
+        db.add(auction)
+        db.flush()
+        for row in lines:
+            db.add(AuctionLine(auction_id=auction.id, **row))
+        _sync_participants(db, auction, form)
+        record(db, action="auction.create", entity_type="auction", entity_id=auction.id,
+               actor=user, auction_id=auction.id, ip=client_ip(request),
+               detail={"title": auction.title, "lines": len(lines)})
+        db.commit()
+    except FormError as exc:
+        db.rollback()
+        return _form_screen(request, db, user, None, error=exc, form=form)
     return redirect(f"/auctions/{auction.id}",
-                    "Draft saved. Review it, then publish to invite your bidders.")
+                    "Saved as a draft. Check it over, then press Publish to invite your bidders.")
+
+
+def _number(form, name: str, label: str, default: float = 0.0) -> float:
+    raw = (form.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise FormError(f"{label} has to be a number — “{raw}” is not.", name)
+    if value < 0:
+        raise FormError(f"{label} cannot be negative.", name)
+    return value
 
 
 def _apply_settings(auction: Auction, form) -> None:
-    auction.start_at = from_local_string(form.get("start_at", ""))
-    auction.end_at = from_local_string(form.get("end_at", ""))
+    for name, label in (("start_at", "the opening time"), ("end_at", "the closing time")):
+        if not (form.get(name) or "").strip():
+            raise FormError(f"Please set {label} for the auction.", name)
+    try:
+        auction.start_at = from_local_string(form.get("start_at", ""))
+        auction.end_at = from_local_string(form.get("end_at", ""))
+    except ValueError:
+        raise FormError("The dates did not come through properly. Click the calendar icon in "
+                        "each date box and pick a date and a time.", "start_at")
     auction.original_end_at = auction.end_at
     if auction.end_at <= auction.start_at:
-        raise HTTPException(400, "The end time has to be after the start time.")
+        raise FormError("The auction closes before it opens. Set the closing time later than "
+                        "the opening time.", "end_at")
+    if (auction.end_at - auction.start_at).total_seconds() < 60:
+        raise FormError("Give bidders at least a minute — set the closing time further out.",
+                        "end_at")
     auction.decrement_type = DecrementType(form.get("decrement_type", "absolute"))
-    auction.min_decrement = float(form.get("min_decrement") or 0)
-    auction.max_decrement = float(form.get("max_decrement") or 0)
+    auction.min_decrement = _number(form, "min_decrement", "The minimum decrement")
+    auction.max_decrement = _number(form, "max_decrement", "The maximum decrement")
     if auction.max_decrement and auction.max_decrement < auction.min_decrement:
-        raise HTTPException(400, "The maximum decrement cannot be smaller than the minimum.")
+        raise FormError("The maximum decrement is smaller than the minimum, which leaves no "
+                        "price a bidder could legally offer.", "max_decrement")
+    if auction.decrement_type == DecrementType.PERCENT and auction.min_decrement >= 100:
+        raise FormError("A minimum decrement of 100% or more would leave nothing to bid.",
+                        "min_decrement")
     auction.show_rank = form.get("show_rank") == "on"
     auction.show_lowest_bid = form.get("show_lowest_bid") == "on"
     auction.hide_bidder_names = form.get("hide_bidder_names") == "on"
     auction.auto_extend = form.get("auto_extend") == "on"
-    auction.extend_trigger_seconds = int(float(form.get("extend_trigger_minutes") or 2) * 60)
-    auction.extend_by_seconds = int(float(form.get("extend_by_minutes") or 3) * 60)
-    auction.max_extensions = int(form.get("max_extensions") or 0)
-    auction.requires_approval = form.get("requires_approval") == "on"
+    auction.extend_trigger_seconds = int(_number(form, "extend_trigger_minutes",
+                                                 "The extension trigger", 2) * 60)
+    auction.extend_by_seconds = int(_number(form, "extend_by_minutes",
+                                            "The extension length", 3) * 60)
+    auction.max_extensions = int(_number(form, "max_extensions", "The number of extensions", 0))
+    if auction.auto_extend and auction.max_extensions and auction.extend_by_seconds <= 0:
+        raise FormError("Auto-extension is on, so each extension needs to add some time.",
+                        "extend_by_minutes")
+    auction.requires_approval = False
     try:
         auction.cc_emails = "\n".join(validate(form.get("cc_emails", ""),
                                                field="email address"))
     except EmailError as exc:
-        raise HTTPException(400, str(exc))
+        raise FormError(str(exc), "cc_emails")
 
 
 def _participants(db: Session, auction: Auction) -> list[Participant]:
@@ -182,7 +284,8 @@ def _sync_participants(db: Session, auction: Auction, form) -> None:
     """Invite the ticked vendors, and record any per-auction address override."""
     wanted = {int(v) for v in form.getlist("vendor_ids") if v}
     if not wanted:
-        raise HTTPException(400, "Invite at least one vendor — only invited vendors can bid.")
+        raise FormError("Tick at least one bidder — only invited vendors can see the auction.",
+                        "vendor_ids")
     existing = {p.vendor_id: p for p in _participants(db, auction)}
     for vendor_id in wanted - set(existing):
         db.add(Participant(auction_id=auction.id, vendor_id=vendor_id))
@@ -198,89 +301,148 @@ def _sync_participants(db: Session, auction: Auction, form) -> None:
             part.notify_emails = "\n".join(validate(typed, field="email address"))
         except EmailError as exc:
             vendor = db.get(Vendor, part.vendor_id)
-            raise HTTPException(400, f"{exc} (against {vendor.name if vendor else 'a bidder'})")
+            raise FormError(f"{exc} (in the box under "
+                            f"{vendor.name if vendor else 'one of the bidders'})", "vendor_ids")
 
 
 # ------------------------------------------------------------------ edit
+def _editable_auction(db: Session, auction_id: int) -> Auction:
+    auction = db.get(Auction, auction_id)
+    if not auction:
+        raise HTTPException(404, "That auction does not exist. It may have been deleted.")
+    if not auction.editable:
+        raise ActionError("Bidding has already started, so the auction can no longer be "
+                          "edited. You can still cancel it if it is wrong.")
+    return auction
+
+
 @router.get("/{auction_id}/edit")
 def edit_auction(auction_id: int, request: Request, user: User = Depends(buyer_only),
                  db: Session = Depends(get_db)):
-    auction = db.get(Auction, auction_id)
-    if not auction:
-        raise HTTPException(404, "That auction does not exist.")
-    if not auction.editable:
-        raise HTTPException(403, "Bidding has started, so this auction can no longer be edited. "
-                                 "You can still cancel it.")
-    context = form_context(db)
-    context.update({"auction": auction, "lines": auction.lines,
-                    "selected_vendors": [p.vendor_id for p in auction.participants],
-                    "overrides": {p.vendor_id: p.notify_emails for p in auction.participants}})
-    return render(request, "auction_form.html", context, user=user, db=db,
-                  help_key="auction_new")
+    try:
+        auction = _editable_auction(db, auction_id)
+    except ActionError as exc:
+        return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
+    return _form_screen(request, db, user, auction)
 
 
 @router.post("/{auction_id}/edit")
 async def update_auction(auction_id: int, request: Request, user: User = Depends(buyer_only),
                          db: Session = Depends(get_db)):
-    auction = db.get(Auction, auction_id)
-    if not auction or not auction.editable:
-        raise HTTPException(403, "This auction can no longer be edited.")
+    try:
+        auction = _editable_auction(db, auction_id)
+    except ActionError as exc:
+        return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
     form = await request.form()
     before = {"title": auction.title, "start": auction.start_at.isoformat(),
               "end": auction.end_at.isoformat()}
-    auction.title = (form.get("title") or "").strip()
-    auction.description = form.get("description", "")
-    auction.terms = form.get("terms", "")
-    _apply_settings(auction, form)
-    rows = parse_lines(form, db)
-    for line in list(auction.lines):
-        db.delete(line)
-    db.flush()
-    for row in rows:
-        db.add(AuctionLine(auction_id=auction.id, **row))
-    _sync_participants(db, auction, form)
-    record(db, action="auction.update", entity_type="auction", entity_id=auction.id, actor=user,
-           auction_id=auction.id, ip=client_ip(request),
-           detail={"before": before, "after": {"title": auction.title,
-                                               "start": auction.start_at.isoformat(),
-                                               "end": auction.end_at.isoformat()}})
-    db.commit()
+    try:
+        title = (form.get("title") or "").strip()
+        if not title:
+            raise FormError("Give the auction a title, so bidders know what it is for.", "title")
+        auction.title = title
+        auction.description = form.get("description", "")
+        auction.terms = form.get("terms", "")
+        _apply_settings(auction, form)
+        rows = parse_lines(form, db)
+        for line in list(auction.lines):
+            db.delete(line)
+        db.flush()
+        for row in rows:
+            db.add(AuctionLine(auction_id=auction.id, **row))
+        _sync_participants(db, auction, form)
+        record(db, action="auction.update", entity_type="auction", entity_id=auction.id,
+               actor=user, auction_id=auction.id, ip=client_ip(request),
+               detail={"before": before, "after": {"title": auction.title,
+                                                   "start": auction.start_at.isoformat(),
+                                                   "end": auction.end_at.isoformat()}})
+        db.commit()
+    except FormError as exc:
+        db.rollback()
+        db.expire_all()
+        return _form_screen(request, db, user, db.get(Auction, auction_id),
+                            error=exc, form=form)
     return redirect(f"/auctions/{auction.id}", "Changes saved.")
 
 
 # ------------------------------------------------------------------ lifecycle
 @router.post("/{auction_id}/publish")
-def publish(auction_id: int, request: Request, user: User = Depends(buyer_only),
+def publish(auction_id: int, request: Request, start_now: str = Form(""),
+            user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+    """Publish straight to the bidders. No approval step, by design.
+
+    If the opening time has already passed — or the buyer asked to start now —
+    the auction opens immediately rather than waiting for the next clock tick.
+    """
+    auction = db.get(Auction, auction_id)
+    if not auction:
+        raise HTTPException(404, "That auction does not exist. It may have been deleted.")
+    try:
+        if auction.status in (AuctionStatus.LIVE, AuctionStatus.SCHEDULED):
+            raise ActionError("This auction has already been published.")
+        if auction.status in (AuctionStatus.CLOSED, AuctionStatus.AWARDED,
+                              AuctionStatus.CANCELLED):
+            raise ActionError("This auction has finished, so it cannot be published again.")
+        if not _participants(db, auction):
+            raise ActionError("Invite at least one bidder before publishing. "
+                              "Use Edit to tick the vendors you want.")
+        if not auction.lines:
+            raise ActionError("Add at least one item before publishing.")
+    except ActionError as exc:
+        return redirect(f"/auctions/{auction.id}", str(exc), kind="error")
+
+    now = datetime.utcnow()
+    auction.published_at = now
+    going_live = start_now == "on" or auction.start_at <= now
+    if going_live:
+        if auction.end_at <= now:
+            return redirect(f"/auctions/{auction.id}",
+                            "The closing time is already in the past. Edit the auction and set "
+                            "a closing time in the future, then publish.", kind="error")
+        auction.start_at = min(auction.start_at, now)
+        auction.status = AuctionStatus.LIVE
+        auction.started_at = now
+    else:
+        auction.status = AuctionStatus.SCHEDULED
+    record(db, action="auction.publish", entity_type="auction", entity_id=auction.id,
+           actor=user, auction_id=auction.id, ip=client_ip(request),
+           detail={"vendors": len(auction.participants), "live_immediately": going_live})
+    db.commit()
+
+    sent = notify.auction_invited(db, auction)
+    if going_live:
+        notify.auction_started(db, auction)
+    copied = notify.auction_published(db, auction, sent)
+    extra = f" A copy went to {copied - 1} colleague(s)." if copied > 1 else ""
+    opening = ("Bidding is open now." if going_live
+               else f"Bidding opens {fmt_dt(auction.start_at)}.")
+    return redirect(f"/auctions/{auction.id}",
+                    f"Published — {sent} bidder contact(s) invited by email. {opening}{extra}")
+
+
+@router.post("/{auction_id}/go-live")
+def go_live(auction_id: int, request: Request, user: User = Depends(buyer_only),
             db: Session = Depends(get_db)):
+    """Open a scheduled auction ahead of its start time."""
     auction = db.get(Auction, auction_id)
     if not auction:
         raise HTTPException(404, "That auction does not exist.")
-    if auction.status not in (AuctionStatus.DRAFT, AuctionStatus.REWORK):
-        raise HTTPException(400, "Only a draft can be published.")
-    if not auction.participants:
-        raise HTTPException(400, "Invite at least one vendor first.")
-
-    if auction.requires_approval:
-        db.add(Approval(auction_id=auction.id, requested_by_id=user.id))
-        auction.status = AuctionStatus.PENDING_APPROVAL
-        record(db, action="auction.submit_for_approval", entity_type="auction",
-               entity_id=auction.id, actor=user, auction_id=auction.id, ip=client_ip(request))
-        db.commit()
-        notify.approval_requested(db, auction, user)
+    if auction.status != AuctionStatus.SCHEDULED:
         return redirect(f"/auctions/{auction.id}",
-                        "Sent for approval. The approvers have been emailed.")
-
-    auction.status = AuctionStatus.SCHEDULED
-    auction.published_at = datetime.utcnow()
-    record(db, action="auction.publish", entity_type="auction", entity_id=auction.id,
-           actor=user, auction_id=auction.id, ip=client_ip(request),
-           detail={"vendors": len(auction.participants)})
+                        "Only a scheduled auction can be started early.", kind="error")
+    now = datetime.utcnow()
+    if auction.end_at <= now:
+        return redirect(f"/auctions/{auction.id}",
+                        "The closing time has already passed. Edit the auction and push the "
+                        "closing time out first.", kind="error")
+    auction.start_at = now
+    auction.status = AuctionStatus.LIVE
+    auction.started_at = now
+    record(db, action="auction.start_early", entity_type="auction", entity_id=auction.id,
+           actor=user, auction_id=auction.id, ip=client_ip(request))
     db.commit()
-    sent = notify.auction_invited(db, auction)
-    copied = notify.auction_published(db, auction, sent)
-    extra = f" A copy went to {copied} person(s) on your side." if copied > 1 else ""
-    return redirect(f"/auctions/{auction.id}",
-                    f"Published. Invitations emailed to {sent} bidder contact(s).{extra}")
+    notify.auction_started(db, auction)
+    return redirect(f"/auctions/{auction.id}", "Bidding is open — every bidder has been emailed.")
 
 
 @router.post("/{auction_id}/cancel")
@@ -290,7 +452,9 @@ def cancel(auction_id: int, request: Request, reason: str = Form(""),
     if not auction:
         raise HTTPException(404, "That auction does not exist.")
     if auction.status in (AuctionStatus.AWARDED, AuctionStatus.CANCELLED):
-        raise HTTPException(400, "This auction is already finished.")
+        return redirect(f"/auctions/{auction.id}",
+                        "This auction has already finished, so there is nothing to cancel.",
+                        kind="error")
     auction.status = AuctionStatus.CANCELLED
     auction.cancelled_at = datetime.utcnow()
     auction.cancel_reason = reason
@@ -305,8 +469,11 @@ def cancel(auction_id: int, request: Request, reason: str = Form(""),
 def close_now(auction_id: int, request: Request, user: User = Depends(buyer_only),
               db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction or auction.status != AuctionStatus.LIVE:
-        raise HTTPException(400, "Only a live auction can be closed.")
+    if not auction:
+        raise HTTPException(404, "That auction does not exist.")
+    if auction.status != AuctionStatus.LIVE:
+        return redirect(f"/auctions/{auction.id}",
+                        "Only a live auction can be closed.", kind="error")
     auction.status = AuctionStatus.CLOSED
     auction.closed_at = auction.end_at = datetime.utcnow()
     record(db, action="auction.close_manual", entity_type="auction", entity_id=auction.id,

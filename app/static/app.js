@@ -94,7 +94,12 @@
       e.preventDefault();
       var target = form.dataset.target;      // css selector of selects to extend
       fetch(form.action, { method: "POST", body: new FormData(form) })
-        .then(function (r) { if (!r.ok) throw new Error("failed"); return r.json(); })
+        .then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok) throw new Error(data.error || "That could not be saved.");
+            return data;
+          });
+        })
         .then(function (data) {
           document.querySelectorAll(target).forEach(function (sel) {
             if (sel.tagName === "SELECT") {
@@ -118,7 +123,7 @@
           closeModal();
           toast("Saved and selected.");
         })
-        .catch(function () { toast("Could not save that - check the fields.", true); });
+        .catch(function (err) { toast(err.message || "Could not save that.", true); });
     });
   });
 
@@ -155,20 +160,24 @@
   }
   window.renumberLines = renumberLines;
 
-  // ------------------------------------------------- award: add a split row
-  window.addSplitRow = function (lineId) {
-    var body = document.getElementById("split-" + lineId);
-    var last = body.querySelector(".split-row");
-    var clone = last.cloneNode(true);
-    clone.querySelectorAll("input[type=number]").forEach(function (i) { i.value = ""; });
-    body.appendChild(clone);
-  };
-
   // ---------------------------------------------- confirm on dangerous actions
   document.querySelectorAll("form[data-confirm]").forEach(function (form) {
     form.addEventListener("submit", function (e) {
       if (!window.confirm(form.dataset.confirm)) e.preventDefault();
     });
+  });
+
+  // --------------------------------------------- show the line total as you type
+  document.addEventListener("input", function (e) {
+    var input = e.target;
+    if (!input.dataset || !input.dataset.total) return;
+    var out = document.getElementById(input.dataset.total);
+    if (!out) return;
+    var price = parseFloat(input.value), qty = parseFloat(input.dataset.qty || "0");
+    out.textContent = (price > 0 && qty > 0)
+      ? "That is " + (price * qty).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
+        " for the whole line."
+      : "";
   });
 
   // ------------------------------------------------- quick-fill the bid input

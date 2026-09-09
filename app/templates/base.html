@@ -3,57 +3,87 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
 <title>{% block title %}{{ app_name }}{% endblock %}</title>
 <link rel="stylesheet" href="/static/app.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#128201;</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230A6B63'/><path d='M9 11h14M9 16h10M9 21h6' stroke='white' stroke-width='2.4' stroke-linecap='round'/></svg>">
 </head>
 <body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-home" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 10 4l7 5.5V16a1 1 0 0 1-1 1h-3v-5H7v5H4a1 1 0 0 1-1-1z"/></g>
+    <g id="i-gavel" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v14M5.5 17h9M4 7h5M6.5 4.5v5M13 5l4 4M15 3l2 2M11 7l2 2"/></g>
+    <g id="i-people" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="7" r="2.6"/><path d="M3 16c0-2.5 2-4.2 4.5-4.2S12 13.5 12 16"/><path d="M13 5.2A2.6 2.6 0 0 1 13 10M14 11.9c1.8.4 3 1.9 3 4.1"/></g>
+    <g id="i-chart" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17h14M6 14V9M10 14V4M14 14v-6"/></g>
+    <g id="i-mail" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="m3 6 7 4.5L17 6"/></g>
+    <g id="i-bell" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a4 4 0 0 1 8 0c0 4 1.5 5 1.5 5h-11S6 12 6 8z"/><path d="M8.5 16a1.7 1.7 0 0 0 3 0"/></g>
+    <g id="i-help" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.2"/><path d="M8 8a2 2 0 1 1 2.6 1.9c-.4.2-.6.6-.6 1V11.5"/><path d="M10 14h.01"/></g>
+    <g id="i-spark" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m10 3 1.7 4.3L16 9l-4.3 1.7L10 15l-1.7-4.3L4 9l4.3-1.7z"/></g>
+    <g id="i-out" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6V4.5a1.5 1.5 0 0 0-1.5-1.5h-5A1.5 1.5 0 0 0 4 4.5v11A1.5 1.5 0 0 0 5.5 17h5a1.5 1.5 0 0 0 1.5-1.5V14"/><path d="M8 10h9m0 0-2.5-2.5M17 10l-2.5 2.5"/></g>
+    <g id="i-tick" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10.5 4 4 8-9"/></g>
+    <g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5 17.5 16.5H2.5z"/><path d="M10 8v3.5M10 14h.01"/></g>
+    <g id="i-info" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.2"/><path d="M10 9.5V14M10 6.5h.01"/></g>
+    <g id="i-box" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 10 3l7 3.5v7L10 17l-7-3.5z"/><path d="M3 6.5 10 10l7-3.5M10 10v7"/></g>
+    <g id="i-plus" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4.5v11M4.5 10h11"/></g>
+    <g id="i-clock" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.2"/><path d="M10 5.8V10l3 1.8"/></g>
+  </defs>
+</svg>
+
 {% if user %}
 <header class="topbar">
-  <a class="brand" href="/"><span class="dot">R</span> {{ app_name }}</a>
+  <a class="brand" href="/"><span class="dot">RB</span> {{ app_name }}</a>
   <nav class="topnav">
-    <a href="/" class="{{ 'on' if request.url.path == '/' }}">Dashboard</a>
-    <a href="/auctions" class="{{ 'on' if request.url.path.startswith('/auctions') }}">Auctions</a>
+    <a href="/" class="{{ 'on' if request.url.path == '/' }}"><svg><use href="#i-home"/></svg>Dashboard</a>
+    <a href="/auctions" class="{{ 'on' if request.url.path.startswith('/auctions') }}"><svg><use href="#i-gavel"/></svg>Auctions</a>
     {% if user.is_buyer_side %}
-      <a href="/masters" class="{{ 'on' if request.url.path.startswith('/masters') }}">Vendors &amp; items</a>
-      <a href="/reports" class="{{ 'on' if request.url.path.startswith('/reports') }}">Reports</a>
-      <a href="/outbox" class="{{ 'on' if request.url.path.startswith('/outbox') }}">Outbox</a>
-    {% endif %}
-    {% if user.role.value in ('approver','admin') %}
-      <a href="/approvals" class="{{ 'on' if request.url.path.startswith('/approvals') }}">Approvals</a>
+      <a href="/masters" class="{{ 'on' if request.url.path.startswith('/masters') }}"><svg><use href="#i-people"/></svg>Vendors &amp; items</a>
+      <a href="/reports" class="{{ 'on' if request.url.path.startswith('/reports') }}"><svg><use href="#i-chart"/></svg>Reports</a>
+      <a href="/outbox" class="{{ 'on' if request.url.path.startswith('/outbox') }}"><svg><use href="#i-mail"/></svg>Outbox</a>
     {% endif %}
   </nav>
   <span class="spacer"></span>
-  <button class="helpbtn" onclick="openDrawer('help-drawer')" title="Plain-language help for this page">? Help</button>
-  <button class="iconbtn" onclick="openDrawer('ask-drawer')" title="Ask the assistant">Ask</button>
-  <a class="iconbtn" href="/notifications" title="Alerts">🔔{% if unread_count %}<span class="badge-dot">{{ unread_count }}</span>{% endif %}</a>
-  <a class="iconbtn" href="/logout" title="{{ user.name }} — sign out">{{ user.name.split()[0] }} ⏻</a>
+  <button class="helpbtn" onclick="openDrawer('help-drawer')" title="Plain-language help for this screen">
+    <svg><use href="#i-help"/></svg>Help</button>
+  <button class="iconbtn" onclick="openDrawer('ask-drawer')" title="Ask the assistant">
+    <svg><use href="#i-spark"/></svg>Ask</button>
+  <a class="iconbtn" href="/notifications" title="Alerts" aria-label="Alerts">
+    <svg><use href="#i-bell"/></svg>{% if unread_count %}<span class="badge-dot">{{ unread_count }}</span>{% endif %}</a>
+  <a class="iconbtn" href="/logout" title="{{ user.name }} — sign out">
+    <span class="avatar">{{ user.name[0]|upper }}</span><svg><use href="#i-out"/></svg></a>
 </header>
 {% endif %}
 
 <main class="wrap {% block wrapclass %}{% endblock %}">
-  {% if flash %}<div class="alert {{ flash.k }}">{{ flash.m }}</div>{% endif %}
+  {% if flash %}
+    <div class="alert {{ flash.k }}" role="status">
+      <svg><use href="{{ '#i-tick' if flash.k == 'ok' else '#i-alert' }}"/></svg>
+      <div>{{ flash.m }}</div>
+    </div>
+  {% endif %}
   {% if user and not email_enabled and user.is_buyer_side and request.url.path == '/' %}
-    <div class="alert info">Emails are in <b>preview mode</b>: every message is saved to the
-      <a href="/outbox">Outbox</a> instead of being sent. Add your mail server details to switch on real sending.</div>
+    <div class="alert info"><svg><use href="#i-info"/></svg>
+      <div>Emails are in <b>preview mode</b>. Every message is saved to the
+      <a href="/outbox">Outbox</a> instead of being sent, so you can see exactly what your
+      bidders would receive. Add your mail server details to switch on real sending.</div></div>
   {% endif %}
   {% block content %}{% endblock %}
 </main>
 
 {% if user %}
 <nav class="mobilenav">
-  <a href="/" class="{{ 'on' if request.url.path == '/' }}"><span class="ic">📊</span>Home</a>
-  <a href="/auctions" class="{{ 'on' if request.url.path.startswith('/auctions') }}"><span class="ic">⚖️</span>Auctions</a>
-  {% if user.is_buyer_side %}<a href="/reports" class="{{ 'on' if request.url.path.startswith('/reports') }}"><span class="ic">📈</span>Reports</a>{% endif %}
-  <a href="/notifications" class="{{ 'on' if request.url.path.startswith('/notifications') }}"><span class="ic">🔔</span>Alerts</a>
-  <a href="#" onclick="openDrawer('help-drawer');return false"><span class="ic">❓</span>Help</a>
+  <a href="/" class="{{ 'on' if request.url.path == '/' }}"><svg><use href="#i-home"/></svg>Home</a>
+  <a href="/auctions" class="{{ 'on' if request.url.path.startswith('/auctions') }}"><svg><use href="#i-gavel"/></svg>Auctions</a>
+  {% if user.is_buyer_side %}<a href="/reports" class="{{ 'on' if request.url.path.startswith('/reports') }}"><svg><use href="#i-chart"/></svg>Reports</a>{% endif %}
+  <a href="/notifications" class="{{ 'on' if request.url.path.startswith('/notifications') }}"><svg><use href="#i-bell"/></svg>Alerts</a>
+  <a href="#" onclick="openDrawer('help-drawer');return false"><svg><use href="#i-help"/></svg>Help</a>
 </nav>
 
 <div class="scrim" id="scrim" onclick="closeDrawers()"></div>
 
-<aside class="drawer" id="help-drawer">
+<aside class="drawer" id="help-drawer" aria-label="Help">
   <header><h3>{{ page_help.title if page_help else 'Help' }}</h3>
-    <button class="iconbtn" onclick="closeDrawers()">✕</button></header>
+    <button class="iconbtn" onclick="closeDrawers()" aria-label="Close">✕</button></header>
   <div class="body">
     {% if page_help %}<p>{{ page_help.intro }}</p>
       {% for q, a in page_help.tips %}
@@ -63,18 +93,20 @@
       <p>A reverse auction runs the opposite way to a normal one: you publish the most you will
          pay, and suppliers compete by going lower. The lowest price wins.</p>
     {% endif %}
-    <h4 style="margin-top:18px">The words we use</h4>
-    <details class="qa"><summary>Starting price</summary><div class="a">The most you will pay per unit. No bid can be above it.</div></details>
-    <details class="qa"><summary>Decrement</summary><div class="a">How much lower each new bid has to be than the current best.</div></details>
-    <details class="qa"><summary>L1, L2, L3</summary><div class="a">L1 is the lowest price right now — the winning position. L2 is second lowest.</div></details>
+    <h4 style="margin:20px 0 8px">The words we use</h4>
+    <details class="qa"><summary>Starting price</summary><div class="a">The most you will pay per unit. No bid can be above it. It is optional — leave it empty and bidders open at whatever price they like.</div></details>
+    <details class="qa"><summary>Decrement</summary><div class="a">How much lower each new bid has to be than the current best. It stops bidders shaving off one rupee at a time.</div></details>
+    <details class="qa"><summary>L1, L2, L3</summary><div class="a">L1 is the lowest price right now — the winning position. L2 is second lowest, and so on.</div></details>
     <details class="qa"><summary>Auto-extension</summary><div class="a">A bid in the last moments pushes the clock back, so nobody wins by bidding at the buzzer.</div></details>
-    <details class="qa"><summary>Baseline &amp; savings</summary><div class="a">Baseline is quantity × starting price. Savings is baseline minus what you actually awarded.</div></details>
+    <details class="qa"><summary>Baseline &amp; savings</summary><div class="a">Baseline is quantity × starting price. Savings is baseline minus what you actually awarded. Where no starting price was set, the highest bid received stands in as the baseline.</div></details>
   </div>
-  <div class="foot"><button class="btn ghost block" onclick="closeDrawers();openDrawer('ask-drawer')">Still stuck? Ask the assistant</button></div>
+  <div class="foot"><button class="btn ghost block" onclick="closeDrawers();openDrawer('ask-drawer')">
+    <svg><use href="#i-spark"/></svg>Still stuck? Ask the assistant</button></div>
 </aside>
 
-<aside class="drawer" id="ask-drawer">
-  <header><h3>Ask about anything</h3><button class="iconbtn" onclick="closeDrawers()">✕</button></header>
+<aside class="drawer" id="ask-drawer" aria-label="Assistant">
+  <header><h3>Ask about anything</h3>
+    <button class="iconbtn" onclick="closeDrawers()" aria-label="Close">✕</button></header>
   <div class="body" id="ask-log">
     <div class="chat-msg bot">Hello {{ user.name.split()[0] }} — ask me anything about running or
       bidding in a reverse auction. I answer in plain language.</div>
@@ -87,7 +119,8 @@
   </div>
   <div class="foot">
     <form id="ask-form" data-context="{{ help_key }}" class="price-input">
-      <input type="text" name="question" placeholder="Type your question…" autocomplete="off">
+      <input type="text" name="question" placeholder="Type your question…" autocomplete="off"
+             aria-label="Your question">
       <button class="btn" type="submit">Ask</button>
     </form>
   </div>

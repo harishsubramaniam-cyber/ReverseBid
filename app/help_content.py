@@ -44,7 +44,6 @@ FIELD_HELP = {
     "item_name": "What you are buying, in everyday words.",
     "unit_code": "A short unit like KG, NOS, MTR, LTR.",
     "bid_price": "Your price per unit. Lower wins — you can bid again as many times as you like.",
-    "award_qty": "How much of this line goes to this bidder. Split it across bidders if you want.",
     "award_price": "The price you are awarding at. It defaults to the bidder's winning price.",
 }
 
@@ -84,6 +83,10 @@ PAGE_HELP = {
         "title": "Running the auction",
         "intro": "Watch bids arrive line by line. The green row is the current lowest price.",
         "tips": [
+            ("Can I publish it straight away?",
+             "Yes. Press Publish and the invitations go out immediately. If the opening time has "
+             "already passed, bidding starts there and then; otherwise it opens at the time you "
+             "set, and you can still press “Start bidding now” to bring it forward."),
             ("Can I still change things?",
              "Before it starts, yes — dates, prices, invited vendors. Once bidding is live, only "
              "cancelling is possible, and everyone is told why."),
@@ -91,8 +94,9 @@ PAGE_HELP = {
              "If a bid arrives in the final moments, the clock is pushed back so others can respond. "
              "It stops last-second sniping."),
             ("How do I award?",
-             "When bidding closes, open the Award tab. You can give a whole line to one bidder or "
-             "split it between several."),
+             "When bidding closes, open the Award screen. Each item is pre-set to its lowest "
+             "bidder; change any of them, or send the whole auction to one supplier. An item "
+             "always goes to a single bidder, for the full quantity."),
         ],
     },
     "auction_detail_vendor": {
@@ -183,10 +187,11 @@ ANSWERS = [
     (["hidden", "anonymous", "names"],
      "With hidden names switched on, bidders see each other as “Bidder A”, “Bidder B” and so on. "
      "As the buyer you always see the real company names."),
-    (["award", "split", "winner", "give the business"],
-     "Once bidding closes, open the **Award** tab. Each line defaults to its lowest bidder, but "
-     "you can change the price, change the quantity, or split one line across several vendors. "
-     "Everyone is emailed the outcome — winners and non-winners."),
+    (["award", "winner", "give the business", "split"],
+     "Once bidding closes, open the **Award** screen. Every item is pre-set to its lowest bidder. "
+     "You can change who wins any item, change the price, or leave an item unawarded — and one "
+     "click gives the whole auction to a single supplier. Each item goes to one bidder only, for "
+     "the full quantity. Everyone is emailed the outcome, winners and non-winners alike."),
     (["savings", "report", "download", "pdf", "csv", "excel"],
      "**Reports → Total Savings** covers every auction in a date range. **Individual Auction "
      "Summary** shows one auction with every bid, the highest and lowest price, the savings and "

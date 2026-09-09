@@ -14,9 +14,9 @@ from datetime import datetime, timedelta
 
 from app import config
 from app.db import Base, SessionLocal, engine
-from app.models import (Approval, ApprovalStatus, Auction, AuctionLine, AuctionStatus, Award, Bid,
-                        DecrementType, EmailMessage, Item, Message, Notification, Participant,
-                        Role, Unit, User, Vendor, AuditLog)
+from app.models import (Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,
+                        EmailMessage, Item, Message, Notification, Participant, Role, Unit,
+                        User, Vendor, AuditLog)
 from app.security import hash_password
 from app.utils import alias_for
 
@@ -49,9 +49,7 @@ def build() -> None:
     # ---------------------------------------------------------------- people
     buyer = User(name="Priya Raman", email="buyer@demo.in", role=Role.BUYER,
                  password_hash=hash_password(PASSWORD), onboarding_done=True)
-    approver = User(name="Anand Kulkarni", email="approver@demo.in", role=Role.APPROVER,
-                    password_hash=hash_password(PASSWORD), onboarding_done=True)
-    db.add_all([buyer, approver])
+    db.add(buyer)
     db.flush()
 
     #  name, login email, contact person, extra people who also get every email
@@ -92,7 +90,6 @@ def build() -> None:
         ("MS angle 50×50×6 mm", "MT", "Steel", 62000.0, 40),
         ("Hydraulic hose assembly, 1 inch", "NOS", "Spares", 2350.0, 180),
         ("Industrial gear oil EP-320", "LTR", "Consumables", 285.0, 2400),
-        ("Cotton wiping cloth", "KG", "Consumables", 95.0, 800),
     ]
     items = []
     for name, unit_code, category, price, qty in item_specs:
@@ -175,48 +172,43 @@ def build() -> None:
         auction.closed_at = auction.end_at
         db.flush()
 
-    # ------------------------------------------------------- history (awarded)
+    # ------------------------------------------------------- 1 & 2: awarded history
     for weeks_ago, title, picks, split in [
-        (14, "Corrugated packaging — Q1 volumes", [0, 1], True),
-        (9, "MS angles and structural steel — March", [2], False),
-        (6, "Hydraulic spares — annual rate contract", [3], False),
-        (3, "Lubricants and consumables — Q2", [4, 5], True),
-        (1, "Packaging top-up — May", [0, 1], False),
+        (6, "Corrugated packaging — Q1 volumes", [0, 1], True),
+        (2, "MS angles and structural steel — March", [2], False),
     ]:
-        start = now - timedelta(weeks=weeks_ago)
-        auction = make_auction(title, AuctionStatus.CLOSED, start,
-                               start + timedelta(hours=2),
-                               [items[i] for i in picks],
+        begin = now - timedelta(weeks=weeks_ago)
+        auction = make_auction(title, AuctionStatus.CLOSED, begin,
+                               begin + timedelta(hours=2), [items[i] for i in picks],
                                description="Rate contract for the coming quarter.")
-        simulate(auction, rounds=random.choice([2, 3, 4]))
+        simulate(auction, rounds=3)
         award_lowest(auction, split_first=split)
 
-    # ------------------------------------------------------- live right now
+    # ------------------------------------------------------- 3: live right now
     live = make_auction("Corrugated boxes and stretch film — live demo",
                         AuctionStatus.LIVE, now - timedelta(minutes=25),
                         now + timedelta(hours=3), [items[0], items[1]],
                         description="Bidding is open. Lowest price per unit wins.",
                         min_decrement=0.5,
-                        cc_emails="procurement.head@demo.in\nfinance@demo.in",
+                        cc_emails="procurement.head@demo.in",
                         overrides={vendors[2].id: "tender.desk@nagpurmetal.example"})
     live.started_at = now - timedelta(minutes=25)
     simulate(live, rounds=2)
 
-    # ------------------------------------------------------- scheduled
-    make_auction("Gear oil EP-320 — starts shortly", AuctionStatus.SCHEDULED,
+    # ------------------------------------------------------- 4: opens later today
+    make_auction("Gear oil EP-320 — opens later today", AuctionStatus.SCHEDULED,
                  now + timedelta(hours=4), now + timedelta(hours=6), [items[4]],
-                 description="Opens in a few hours.")
+                 description="Invitations have gone out. Bidding opens at the time shown.")
 
-    # ------------------------------------------------------- awaiting approval
-    pending = make_auction("Wiping cloth — needs sign-off", AuctionStatus.PENDING_APPROVAL,
-                           now + timedelta(days=1), now + timedelta(days=1, hours=2),
-                           [items[5]], requires_approval=True)
-    db.add(Approval(auction_id=pending.id, requested_by_id=buyer.id,
-                    status=ApprovalStatus.PENDING))
-
-    # ------------------------------------------------------- a draft
-    make_auction("Draft — hydraulic hoses, second half", AuctionStatus.DRAFT,
-                 now + timedelta(days=3), now + timedelta(days=3, hours=2), [items[3]])
+    # ------------------------------------------------------- 5: a draft, with no ceiling set
+    draft = make_auction("Hydraulic hoses — draft, no ceiling set", AuctionStatus.DRAFT,
+                         now + timedelta(days=2), now + timedelta(days=2, hours=2),
+                         [items[3]],
+                         description="An example of leaving the starting price empty: bidders "
+                                     "open at whatever they like, and savings are measured from "
+                                     "the highest bid received.")
+    for line in draft.lines:
+        line.starting_price = None
 
     # a conversation on the live auction
     db.add(Message(auction_id=live.id, vendor_id=vendors[0].id,
@@ -230,7 +222,6 @@ def build() -> None:
 
     print("\nDemo data ready.\n")
     print(f"  Buyer      buyer@demo.in      / {PASSWORD}")
-    print(f"  Approver   approver@demo.in   / {PASSWORD}")
     for _, email, contact, _extra in vendor_specs:
         print(f"  Bidder     {email:<18} / {PASSWORD}   ({contact})")
     print(f"\nDatabase: {config.DATABASE_URL}\nNow run:  uvicorn app.main:app --reload\n")

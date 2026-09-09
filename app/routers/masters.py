@@ -3,11 +3,13 @@ used from inside the auction form so the buyer never loses their place."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ..audit import record
 from ..db import get_db
 from ..emails_util import EmailError, describe, normalise, parse, validate
+from ..errors import ActionError as MasterProblem
 from ..models import Item, Unit, User, Vendor
 from ..security import buyer_only, current_user
 from ..web import client_ip, redirect, render
@@ -40,9 +42,12 @@ def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Ve
         typed = validate(email, field="email address")
         extras = validate(extra.pop("extra_emails", ""), field="email address")
     except EmailError as exc:
-        raise HTTPException(400, str(exc))
-    if not name or not typed:
-        raise HTTPException(400, "A vendor needs a name and at least one email address.")
+        raise MasterProblem(str(exc))
+    if not name:
+        raise MasterProblem("A vendor needs a company name.")
+    if not typed:
+        raise MasterProblem("A vendor needs at least one email address — that is where the "
+                            "invitations go.")
     email, rest = typed[0], typed[1:]
     extras = [a for a in rest + extras if a != email]
     existing = db.query(Vendor).filter(Vendor.email == email).first()
@@ -66,7 +71,7 @@ def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Ve
 def create_item(db: Session, user: User, name: str, **extra) -> Item:
     name = name.strip()
     if not name:
-        raise HTTPException(400, "An item needs a name.")
+        raise MasterProblem("An item needs a name.")
     unit_id = extra.pop("default_unit_id", None)
     item = Item(name=name, created_by_id=user.id,
                 default_unit_id=int(unit_id) if unit_id else None,
@@ -82,7 +87,7 @@ def create_item(db: Session, user: User, name: str, **extra) -> Item:
 def create_unit(db: Session, user: User, code: str, name: str = "") -> Unit:
     code = code.strip().upper()
     if not code:
-        raise HTTPException(400, "A unit needs a short code, like KG.")
+        raise MasterProblem("A unit needs a short code, like KG.")
     existing = db.query(Unit).filter(Unit.code == code).first()
     if existing:
         return existing
@@ -96,21 +101,25 @@ def create_unit(db: Session, user: User, code: str, name: str = "") -> Unit:
 
 
 @router.post("/vendors")
-def post_vendor(request: Request, name: str = Form(...), email: str = Form(...),
+def post_vendor(request: Request, name: str = Form(""), email: str = Form(""),
                 extra_emails: str = Form(""), code: str = Form(""),
                 contact_person: str = Form(""), phone: str = Form(""),
                 gstin: str = Form(""), address: str = Form(""),
                 user: User = Depends(buyer_only), db: Session = Depends(get_db)):
-    vendor = create_vendor(db, user, name, email, extra_emails=extra_emails, code=code,
-                           contact_person=contact_person, phone=phone, gstin=gstin,
-                           address=address)
-    count = 1 + len(parse(vendor.extra_emails))
-    return redirect("/masters?tab=vendors",
-                    f"Vendor “{vendor.name}” saved. Emails go to {count} address(es).")
+    try:
+        vendor = create_vendor(db, user, name, email, extra_emails=extra_emails, code=code,
+                               contact_person=contact_person, phone=phone, gstin=gstin,
+                               address=address)
+        count = 1 + len(parse(vendor.extra_emails))
+        return redirect("/masters?tab=vendors",
+                        f"Vendor “{vendor.name}” saved. Emails go to {count} address(es).")
+    except MasterProblem as exc:
+        return redirect("/masters?tab=vendors", str(exc), kind="error")
+
 
 
 @router.post("/vendors/{vendor_id}/emails")
-def update_vendor_emails(vendor_id: int, request: Request, email: str = Form(...),
+def update_vendor_emails(vendor_id: int, request: Request, email: str = Form(""),
                          extra_emails: str = Form(""), user: User = Depends(buyer_only),
                          db: Session = Depends(get_db)):
     """Edit exactly who at this vendor receives the platform's emails."""
@@ -137,25 +146,47 @@ def update_vendor_emails(vendor_id: int, request: Request, email: str = Form(...
 
 
 @router.post("/items")
-def post_item(request: Request, name: str = Form(...), code: str = Form(""),
+def post_item(request: Request, name: str = Form(""), code: str = Form(""),
               category: str = Form(""), description: str = Form(""),
               default_unit_id: str = Form(""), user: User = Depends(buyer_only),
               db: Session = Depends(get_db)):
-    item = create_item(db, user, name, code=code, category=category, description=description,
-                       default_unit_id=default_unit_id or None)
-    return redirect("/masters?tab=items", f"Item “{item.name}” saved.")
+    try:
+        item = create_item(db, user, name, code=code, category=category, description=description,
+                           default_unit_id=default_unit_id or None)
+        return redirect("/masters?tab=items", f"Item “{item.name}” saved.")
+    except MasterProblem as exc:
+        return redirect("/masters?tab=items", str(exc), kind="error")
+
 
 
 @router.post("/units")
-def post_unit(request: Request, code: str = Form(...), name: str = Form(""),
+def post_unit(request: Request, code: str = Form(""), name: str = Form(""),
               user: User = Depends(buyer_only), db: Session = Depends(get_db)):
-    unit = create_unit(db, user, code, name)
-    return redirect("/masters?tab=units", f"Unit “{unit.code}” saved.")
+    try:
+        unit = create_unit(db, user, code, name)
+        return redirect("/masters?tab=units", f"Unit “{unit.code}” saved.")
+    except MasterProblem as exc:
+        return redirect("/masters?tab=units", str(exc), kind="error")
+
 
 
 # ------------------------------------------------------------------ inline (JSON)
+def _quick(fn):
+    """Inline create from the auction form: reply with a message, never a crash."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except MasterProblem as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    return wrapper
+
+
 @router.post("/quick/vendor")
-def quick_vendor(name: str = Form(...), email: str = Form(...), phone: str = Form(""),
+@_quick
+def quick_vendor(name: str = Form(""), email: str = Form(""), phone: str = Form(""),
                  extra_emails: str = Form(""), user: User = Depends(buyer_only),
                  db: Session = Depends(get_db)):
     vendor = create_vendor(db, user, name, email, phone=phone, extra_emails=extra_emails)
@@ -165,7 +196,8 @@ def quick_vendor(name: str = Form(...), email: str = Form(...), phone: str = For
 
 
 @router.post("/quick/item")
-def quick_item(name: str = Form(...), default_unit_id: str = Form(""),
+@_quick
+def quick_item(name: str = Form(""), default_unit_id: str = Form(""),
                user: User = Depends(buyer_only), db: Session = Depends(get_db)):
     item = create_item(db, user, name, default_unit_id=default_unit_id or None)
     return {"id": item.id, "label": item.name,
@@ -173,7 +205,8 @@ def quick_item(name: str = Form(...), default_unit_id: str = Form(""),
 
 
 @router.post("/quick/unit")
-def quick_unit(code: str = Form(...), name: str = Form(""),
+@_quick
+def quick_unit(code: str = Form(""), name: str = Form(""),
                user: User = Depends(buyer_only), db: Session = Depends(get_db)):
     unit = create_unit(db, user, code, name)
     return {"id": unit.id, "label": unit.code}

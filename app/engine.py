@@ -92,20 +92,43 @@ def display_name(db: Session, auction: Auction, vendor: Vendor, viewer: User) ->
     return alias_map(db, auction).get(vendor.id, "Bidder")
 
 
+def line_baseline(db: Session, line: AuctionLine) -> float:
+    """What this line was expected to cost.
+
+    With a starting price it is quantity x ceiling. Without one there is no
+    budget to compare against, so the highest bid received stands in - savings
+    are then measured from the worst price offered, which is the honest
+    reading. A line with neither is worth nothing to the savings maths.
+    """
+    if line.has_ceiling:
+        return line.qty * line.starting_price
+    ranked = best_per_vendor(db, line.id)
+    return line.qty * ranked[-1].unit_price if ranked else 0.0
+
+
+def auction_baseline(db: Session, auction: Auction) -> float:
+    return sum(line_baseline(db, line) for line in auction.lines)
+
+
 # ------------------------------------------------------------------ bid limits
 @dataclass
 class BidWindow:
     """The price range a bidder may use right now, ready to show in the UI."""
-    reference: float          # current lowest, or the ceiling if no bids yet
+    reference: float | None   # current lowest, or the ceiling if no bids yet
     reference_is_ceiling: bool
-    max_allowed: float        # highest price accepted (reference - min decrement)
+    max_allowed: float | None  # highest price accepted; None = no ceiling yet
     min_allowed: float        # lowest price accepted (reference - max decrement)
     min_step: float
     max_step: float | None
 
     @property
-    def suggestion(self) -> float:
-        return round(self.max_allowed, 2)
+    def suggestion(self) -> float | None:
+        return None if self.max_allowed is None else round(self.max_allowed, 2)
+
+    @property
+    def open_ended(self) -> bool:
+        """No ceiling and no bids yet - the bidder names the opening price."""
+        return self.max_allowed is None
 
 
 def decrement_value(auction: Auction, reference: float, amount: float) -> float:
@@ -116,6 +139,11 @@ def decrement_value(auction: Auction, reference: float, amount: float) -> float:
 
 def bid_window(db: Session, auction: Auction, line: AuctionLine) -> BidWindow:
     current = best_bid(db, line.id)
+    if current is None and not line.has_ceiling:
+        # No ceiling, no bids: anything positive opens the line.
+        return BidWindow(reference=None, reference_is_ceiling=True, max_allowed=None,
+                         min_allowed=0.01, min_step=0.0, max_step=None)
+
     reference = current.unit_price if current else line.starting_price
     min_step = decrement_value(auction, reference, auction.min_decrement or 0.0)
     max_step = decrement_value(auction, reference, auction.max_decrement) if auction.max_decrement else None
@@ -149,12 +177,12 @@ def place_bid(db: Session, auction: Auction, line: AuctionLine, user: User,
     window = bid_window(db, auction, line)
     previous_best = best_bid(db, line.id)
 
-    if unit_price > line.starting_price:
+    if line.has_ceiling and unit_price > line.starting_price:
         raise BidError(
             f"Your price is above the starting price of {fmt_money(line.starting_price)}. "
             "In a reverse auction the starting price is the most the buyer will pay, so your "
             "bid has to be at or below it.")
-    if unit_price > window.max_allowed:
+    if window.max_allowed is not None and unit_price > window.max_allowed:
         raise BidError(
             f"Too high. The current lowest bid is {fmt_money(window.reference)} and you must go "
             f"at least {fmt_money(window.min_step)} below it — so "
@@ -242,8 +270,8 @@ def line_result(db: Session, line: AuctionLine) -> dict:
     ranked = best_per_vendor(db, line.id)
     lowest = ranked[0] if ranked else None
     highest = ranked[-1] if ranked else None
-    final_unit = lowest.unit_price if lowest else line.starting_price
-    baseline = line.baseline
+    final_unit = lowest.unit_price if lowest else (line.starting_price or 0.0)
+    baseline = line_baseline(db, line)
     final_value = final_unit * line.qty
     return {
         "line": line, "bids": len(line_bids(db, line.id)), "bidders": len(ranked),
@@ -256,13 +284,13 @@ def line_result(db: Session, line: AuctionLine) -> dict:
 
 def auction_summary(db: Session, auction: Auction) -> dict:
     awards = db.query(Award).filter(Award.auction_id == auction.id).all()
-    baseline = auction.baseline_value
+    baseline = auction_baseline(db, auction)
     if awards:
         final_value = sum(a.total for a in awards)
         awarded_line_ids = {a.line_id for a in awards}
         for line in auction.lines:
             if line.id not in awarded_line_ids:
-                final_value += line.baseline
+                final_value += line_baseline(db, line)
         basis = "awarded"
     else:
         final_value = sum(line_result(db, l)["final_value"] for l in auction.lines)
@@ -275,6 +303,7 @@ def auction_summary(db: Session, auction: Auction) -> dict:
         "savings": baseline - final_value,
         "savings_pct": ((baseline - final_value) / baseline * 100) if baseline else 0.0,
         "basis": basis, "total_bids": total_bids,
+        "open_lines": sum(1 for l in auction.lines if not l.has_ceiling),
         "participants": len(auction.participants), "active_bidders": len(bidder_ids),
         "awards": awards,
     }

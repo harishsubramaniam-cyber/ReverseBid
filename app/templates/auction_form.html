@@ -1,186 +1,251 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit' if auction else 'New' }} auction — {{ app_name }}{% endblock %}
+
+{# One place to decide where each value comes from: what was just typed (prefill,
+   after a rejected submission), then the saved auction, then a sensible default. #}
+{% set pf = prefill %}
+{% set line_rows = pf.lines if pf else lines %}
+{% set picked = pf.vendor_ids if pf else (selected_vendors or []) %}
+{% set over = pf.overrides if pf else (overrides or {}) %}
+
+{% macro flag(key, default) -%}
+  {{ 'checked' if (pf[key] if pf else (auction[key] if auction else default)) }}
+{%- endmacro %}
+
 {% block content %}
-<div class="page-head"><div class="grow">
-  <h1>{{ 'Edit ' + auction.reference if auction else 'Create an auction' }}</h1>
-  <p class="sub">Four short sections. Nothing goes out to anyone until you press Publish.</p>
-</div>
-<button class="helpbtn" onclick="openDrawer('help-drawer')">What is a reverse auction?</button></div>
-
-<form method="post" action="{{ '/auctions/' ~ auction.id ~ '/edit' if auction else '/auctions/new' }}">
-
-<!-- 1 ------------------------------------------------------------------- -->
-<div class="card">
-  <div class="card-head"><span class="li-num">1</span><h2>What are you buying?</h2></div>
-  <div class="field"><label for="title">Title</label>
-    <input id="title" name="title" required value="{{ auction.title if auction else '' }}"
-           placeholder="e.g. Corrugated boxes — Q3 volumes">
-    <p class="hint">{{ FIELD_HELP.title }}</p></div>
-  <div class="field"><label for="description">Description <span class="muted small">(optional)</span></label>
-    <textarea id="description" name="description" placeholder="Anything bidders should know before they price it.">{{ auction.description if auction else '' }}</textarea>
-    <p class="hint">{{ FIELD_HELP.description }}</p></div>
-  <div class="field"><label for="terms">Terms <span class="muted small">(optional)</span></label>
-    <textarea id="terms" name="terms" placeholder="Payment terms, delivery, warranty…">{{ auction.terms if auction else '' }}</textarea>
-    <p class="hint">{{ FIELD_HELP.terms }}</p></div>
+<div class="page-head">
+  <div class="grow">
+    {% if auction %}<div class="eyebrow">{{ auction.reference }}</div>{% endif %}
+    <h1>{{ 'Edit this auction' if auction else 'Create an auction' }}</h1>
+    <p class="sub">Four short sections. Nothing is emailed to anyone until you press Publish.</p>
+  </div>
+  <button type="button" class="helpbtn" onclick="openDrawer('help-drawer')">
+    <svg><use href="#i-help"/></svg>What is a reverse auction?</button>
 </div>
 
-<!-- 2 ------------------------------------------------------------------- -->
-<div class="card">
-  <div class="card-head"><span class="li-num">2</span><h2>Items and starting prices</h2><span class="spacer"></span>
+{% if error %}
+<div class="alert error" id="form-error" role="alert">
+  <svg><use href="#i-alert"/></svg>
+  <div><b>That did not save.</b> {{ error }}</div>
+</div>
+{% endif %}
+
+<form method="post" id="auction-form" novalidate
+      action="{{ '/auctions/' ~ auction.id ~ '/edit' if auction else '/auctions/new' }}">
+
+<!-- 1 ---------------------------------------------------------------------- -->
+<section class="step-card">
+  <div class="head"><span class="n">1</span><h2>What are you buying?</h2></div>
+
+  <div class="field {{ 'bad' if error_field == 'title' }}">
+    <label for="title">Title</label>
+    <input id="title" name="title" maxlength="250" placeholder="e.g. Corrugated boxes — Q3 volumes"
+           value="{{ pf.title if pf else (auction.title if auction else '') }}">
+    <p class="hint">{{ FIELD_HELP.title }}</p>
+  </div>
+
+  <div class="field">
+    <label for="description">Description <span class="optional">(optional)</span></label>
+    <textarea id="description" name="description"
+      placeholder="Anything bidders should know before they price it.">{{ pf.description if pf else (auction.description if auction else '') }}</textarea>
+    <p class="hint">{{ FIELD_HELP.description }}</p>
+  </div>
+
+  <div class="field">
+    <label for="terms">Terms <span class="optional">(optional)</span></label>
+    <textarea id="terms" name="terms"
+      placeholder="Payment terms, delivery, warranty…">{{ pf.terms if pf else (auction.terms if auction else '') }}</textarea>
+    <p class="hint">{{ FIELD_HELP.terms }}</p>
+  </div>
+</section>
+
+<!-- 2 ---------------------------------------------------------------------- -->
+<section class="step-card">
+  <div class="head"><span class="n">2</span><h2>Items and quantities</h2><span class="spacer"></span>
     <button type="button" class="linkbtn" onclick="openModal('m-item')">+ New item</button>
     <span class="muted">·</span>
-    <button type="button" class="linkbtn" onclick="openModal('m-unit')">+ New unit</button></div>
-  <div class="alert info small">The <b>starting price</b> is your ceiling — the most you will pay
-    per unit. Bidders can only go at or below it.</div>
+    <button type="button" class="linkbtn" onclick="openModal('m-unit')">+ New unit</button>
+  </div>
+
+  <div class="alert info" style="margin-bottom:14px"><svg><use href="#i-info"/></svg>
+    <div>The <b>starting price</b> is your ceiling — the most you will pay per unit — and it is
+    <b>optional</b>. Leave it empty and bidders can open at any price; savings are then measured
+    from the highest bid you receive.</div></div>
 
   <div id="line-rows">
-    {% for line in lines %}
-    <div class="line-item">
-      <div class="li-head"><span class="li-num">{{ loop.index }}</span>
-        <b>Item {{ loop.index }}</b><span class="spacer" style="flex:1"></span>
-        <button type="button" class="linkbtn" onclick="removeLineRow(this)">Remove</button></div>
+    {% for line in line_rows %}
+    <div class="item-row">
+      <div class="top"><span class="li-num">{{ loop.index }}</span><b>Item {{ loop.index }}</b>
+        <span style="flex:1"></span>
+        <button type="button" class="linkbtn quiet" onclick="removeLineRow(this)">Remove</button></div>
       <div class="row">
-        <div style="flex:2"><label>Item</label>
-          <select name="line_item_id" class="sel-item" required>
-            <option value="">Choose…</option>
-            {% for item in items %}<option value="{{ item.id }}" {{ 'selected' if line.item_id == item.id }}>{{ item.name }}</option>{% endfor %}
+        <div style="flex:2.2"><label>Item</label>
+          <select name="line_item_id" class="sel-item">
+            <option value="">Choose an item…</option>
+            {% for item in items %}<option value="{{ item.id }}"
+              {{ 'selected' if line.item_id and item.id|string == line.item_id|string }}>{{ item.name }}</option>{% endfor %}
           </select></div>
-        <div><label>Unit</label>
+        <div style="max-width:120px"><label>Unit</label>
           <select name="line_unit_id" class="sel-unit"><option value="">—</option>
-            {% for unit in units %}<option value="{{ unit.id }}" {{ 'selected' if line.unit_id == unit.id }}>{{ unit.code }}</option>{% endfor %}
+            {% for unit in units %}<option value="{{ unit.id }}"
+              {{ 'selected' if line.unit_id and unit.id|string == line.unit_id|string }}>{{ unit.code }}</option>{% endfor %}
           </select></div>
-        <div><label>Quantity</label>
-          <input type="number" step="any" min="0.0001" name="line_qty" value="{{ line.qty }}" required></div>
-        <div><label>Starting price ({{ currency }})</label>
-          <input type="number" step="0.01" min="0.01" name="line_price" value="{{ line.starting_price }}" required></div>
+        <div style="max-width:150px"><label>Quantity</label>
+          <input type="number" step="any" min="0.0001" name="line_qty" value="{{ line.qty if line.qty is not none else 1 }}"></div>
+        <div style="max-width:190px"><label>Starting price <span class="optional">(optional)</span></label>
+          <input type="number" step="0.01" min="0.01" name="line_price" placeholder="No ceiling"
+                 value="{{ line.starting_price if line.starting_price is not none else '' }}"></div>
       </div>
-      <input type="text" name="line_spec" placeholder="Specification (optional)" value="{{ line.specification }}" style="margin-top:8px">
+      <input type="text" name="line_spec" placeholder="Specification (optional)"
+             style="margin-top:9px" value="{{ line.specification or '' }}">
     </div>
     {% endfor %}
-    {% if not lines %}
-    <div class="line-item">
-      <div class="li-head"><span class="li-num">1</span><b>Item 1</b>
-        <span class="spacer" style="flex:1"></span>
-        <button type="button" class="linkbtn" onclick="removeLineRow(this)">Remove</button></div>
+
+    {% if not line_rows %}
+    <div class="item-row">
+      <div class="top"><span class="li-num">1</span><b>Item 1</b><span style="flex:1"></span>
+        <button type="button" class="linkbtn quiet" onclick="removeLineRow(this)">Remove</button></div>
       <div class="row">
-        <div style="flex:2"><label>Item</label>
-          <select name="line_item_id" class="sel-item" required><option value="">Choose…</option>
+        <div style="flex:2.2"><label>Item</label>
+          <select name="line_item_id" class="sel-item"><option value="">Choose an item…</option>
             {% for item in items %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></div>
-        <div><label>Unit</label><select name="line_unit_id" class="sel-unit"><option value="">—</option>
+        <div style="max-width:120px"><label>Unit</label>
+          <select name="line_unit_id" class="sel-unit"><option value="">—</option>
             {% for unit in units %}<option value="{{ unit.id }}">{{ unit.code }}</option>{% endfor %}</select></div>
-        <div><label>Quantity</label><input type="number" step="any" min="0.0001" name="line_qty" value="1" required>
+        <div style="max-width:150px"><label>Quantity</label>
+          <input type="number" step="any" min="0.0001" name="line_qty" value="1">
           <p class="hint">{{ FIELD_HELP.qty }}</p></div>
-        <div><label>Starting price ({{ currency }})</label><input type="number" step="0.01" min="0.01" name="line_price" required>
+        <div style="max-width:190px"><label>Starting price <span class="optional">(optional)</span></label>
+          <input type="number" step="0.01" min="0.01" name="line_price" placeholder="No ceiling">
           <p class="hint">{{ FIELD_HELP.starting_price }}</p></div>
       </div>
-      <input type="text" name="line_spec" placeholder="Specification (optional)" style="margin-top:8px">
+      <input type="text" name="line_spec" placeholder="Specification (optional)" style="margin-top:9px">
     </div>
     {% endif %}
   </div>
-  <button type="button" class="btn ghost sm" onclick="addLineRow()">+ Add another item</button>
-</div>
+  <button type="button" class="btn ghost sm" onclick="addLineRow()">
+    <svg><use href="#i-plus"/></svg>Add another item</button>
+</section>
 
-<!-- 3 ------------------------------------------------------------------- -->
-<div class="card">
-  <div class="card-head"><span class="li-num">3</span><h2>Who is invited?</h2><span class="spacer"></span>
+<!-- 3 ---------------------------------------------------------------------- -->
+<section class="step-card">
+  <div class="head"><span class="n">3</span><h2>Who is invited to bid?</h2><span class="spacer"></span>
     <button type="button" class="linkbtn" onclick="openModal('m-vendor')">+ New vendor</button></div>
-  <p class="hint" style="margin-bottom:10px">{{ FIELD_HELP.vendors }}</p>
-  <div id="vendor-list" style="max-height:420px;overflow-y:auto">
+  <p class="hint" style="margin:0 0 12px">{{ FIELD_HELP.vendors }}</p>
+
+  <div id="vendor-list" style="max-height:400px; overflow-y:auto">
     {% for vendor in vendors %}
     {% set addresses = [vendor.email] + email_list(vendor.extra_emails) %}
     <div class="vendor-row">
       <label class="check" style="margin-bottom:0">
         <input type="checkbox" name="vendor_ids" value="{{ vendor.id }}"
-          {{ 'checked' if selected_vendors and vendor.id in selected_vendors }}>
+               {{ 'checked' if vendor.id in picked }}>
         <span><span class="t">{{ vendor.name }}</span>
           <span class="d">Emails go to {{ email_describe(addresses) }}</span></span>
       </label>
       <div class="vendor-override">
         <input type="text" name="notify_emails_{{ vendor.id }}"
-               value="{{ overrides.get(vendor.id, '') | replace('\n', ', ') }}"
+               value="{{ (over.get(vendor.id) or '') | replace('\n', ', ') }}"
                placeholder="Send this auction to a different address (optional)">
       </div>
     </div>
     {% endfor %}
-    {% if not vendors %}<div class="empty small">No vendors yet — add one with the link above.</div>{% endif %}
+    {% if not vendors %}
+      <div class="empty"><div class="icon"><svg><use href="#i-people"/></svg></div>
+        <h3>No vendors yet</h3>
+        <p class="small">Add one with the <b>+ New vendor</b> link above — a name and an email
+          is all it takes.</p></div>
+    {% endif %}
   </div>
   <p class="hint">{{ FIELD_HELP.notify_emails }}</p>
 
-  <div class="field" style="margin-top:16px">
-    <label for="cc_emails">Copy my own team on this auction <span class="muted small">(optional)</span></label>
+  <div class="field {{ 'bad' if error_field == 'cc_emails' }}" style="margin-top:18px">
+    <label for="cc_emails">Copy my own team <span class="optional">(optional)</span></label>
     <input id="cc_emails" type="text" name="cc_emails"
-           value="{{ auction.cc_emails | replace('\n', ', ') if auction else '' }}"
-           placeholder="head.procurement@yourcompany.com, finance@yourcompany.com">
+           placeholder="head.procurement@yourcompany.com, finance@yourcompany.com"
+           value="{{ (pf.cc_emails if pf else (auction.cc_emails if auction else '')) | replace('\n', ', ') }}">
     <p class="hint">{{ FIELD_HELP.cc_emails }}</p>
   </div>
-</div>
+</section>
 
-<!-- 4 ------------------------------------------------------------------- -->
-<div class="card">
-  <div class="card-head"><span class="li-num">4</span><h2>Timing and bidding rules</h2></div>
+<!-- 4 ---------------------------------------------------------------------- -->
+<section class="step-card">
+  <div class="head"><span class="n">4</span><h2>Timing and bidding rules</h2></div>
+
   <div class="row">
-    <div class="field"><label for="start_at">Bidding opens</label>
-      <input id="start_at" type="datetime-local" name="start_at" required
-             value="{{ to_local_string(auction.start_at) if auction else to_local_string(default_start) }}">
-      <p class="hint">{{ FIELD_HELP.start_at }}</p></div>
-    <div class="field"><label for="end_at">Bidding closes</label>
-      <input id="end_at" type="datetime-local" name="end_at" required
-             value="{{ to_local_string(auction.end_at) if auction else to_local_string(default_end) }}">
-      <p class="hint">{{ FIELD_HELP.end_at }} Times are {{ tz_name }}.</p></div>
+    <div class="field {{ 'bad' if error_field == 'start_at' }}">
+      <label for="start_at">Bidding opens</label>
+      <input id="start_at" type="datetime-local" name="start_at"
+             value="{{ pf.start_at if pf else (to_local_string(auction.start_at) if auction else to_local_string(default_start)) }}">
+      <p class="hint">{{ FIELD_HELP.start_at }} Times are {{ tz_name }}.</p>
+    </div>
+    <div class="field {{ 'bad' if error_field == 'end_at' }}">
+      <label for="end_at">Bidding closes</label>
+      <input id="end_at" type="datetime-local" name="end_at"
+             value="{{ pf.end_at if pf else (to_local_string(auction.end_at) if auction else to_local_string(default_end)) }}">
+      <p class="hint">{{ FIELD_HELP.end_at }}</p>
+    </div>
   </div>
 
   <div class="row">
-    <div class="field"><label for="decrement_type">Minimum drop is a…</label>
+    <div class="field"><label for="decrement_type">The minimum drop is a…</label>
+      {% set dt = pf.decrement_type if pf else (auction.decrement_type.value if auction else 'absolute') %}
       <select id="decrement_type" name="decrement_type">
-        <option value="absolute" {{ 'selected' if not auction or auction.decrement_type.value == 'absolute' }}>Fixed amount ({{ currency }})</option>
-        <option value="percent" {{ 'selected' if auction and auction.decrement_type.value == 'percent' }}>Percentage (%)</option>
+        <option value="absolute" {{ 'selected' if dt == 'absolute' }}>Fixed amount ({{ currency }})</option>
+        <option value="percent" {{ 'selected' if dt == 'percent' }}>Percentage (%)</option>
       </select><p class="hint">{{ FIELD_HELP.decrement_type }}</p></div>
-    <div class="field"><label for="min_decrement">Minimum decrement</label>
+
+    <div class="field {{ 'bad' if error_field == 'min_decrement' }}">
+      <label for="min_decrement">Minimum decrement</label>
       <input id="min_decrement" type="number" step="0.01" min="0" name="min_decrement"
-             value="{{ auction.min_decrement if auction else 1 }}">
+             value="{{ pf.min_decrement if pf else (auction.min_decrement if auction else 1) }}">
       <p class="hint">{{ FIELD_HELP.min_decrement }}</p></div>
-    <div class="field"><label for="max_decrement">Maximum decrement</label>
+
+    <div class="field {{ 'bad' if error_field == 'max_decrement' }}">
+      <label for="max_decrement">Maximum decrement</label>
       <input id="max_decrement" type="number" step="0.01" min="0" name="max_decrement"
-             value="{{ auction.max_decrement if auction else 0 }}">
+             value="{{ pf.max_decrement if pf else (auction.max_decrement if auction else 0) }}">
       <p class="hint">{{ FIELD_HELP.max_decrement }}</p></div>
   </div>
 
-  <h3 style="margin-top:8px">What bidders can see</h3>
-  <label class="check"><input type="checkbox" name="show_rank" {{ 'checked' if not auction or auction.show_rank }}>
-    <span><span class="t">Show each bidder their rank</span><span class="d">{{ FIELD_HELP.show_rank }}</span></span></label>
-  <label class="check"><input type="checkbox" name="show_lowest_bid" {{ 'checked' if not auction or auction.show_lowest_bid }}>
-    <span><span class="t">Show the current lowest price</span><span class="d">{{ FIELD_HELP.show_lowest_bid }}</span></span></label>
-  <label class="check"><input type="checkbox" name="hide_bidder_names" {{ 'checked' if not auction or auction.hide_bidder_names }}>
-    <span><span class="t">Hide bidder names from each other</span><span class="d">{{ FIELD_HELP.hide_bidder_names }}</span></span></label>
+  <h4 style="margin:16px 0 8px">What bidders can see</h4>
+  <label class="check"><input type="checkbox" name="show_rank" {{ flag('show_rank', true) }}>
+    <span><span class="t">Show each bidder their rank</span>
+      <span class="d">{{ FIELD_HELP.show_rank }}</span></span></label>
+  <label class="check"><input type="checkbox" name="show_lowest_bid" {{ flag('show_lowest_bid', true) }}>
+    <span><span class="t">Show the current lowest price</span>
+      <span class="d">{{ FIELD_HELP.show_lowest_bid }}</span></span></label>
+  <label class="check"><input type="checkbox" name="hide_bidder_names" {{ flag('hide_bidder_names', true) }}>
+    <span><span class="t">Hide bidder names from each other</span>
+      <span class="d">{{ FIELD_HELP.hide_bidder_names }}</span></span></label>
 
-  <h3 style="margin-top:12px">The closing rules</h3>
-  <label class="check"><input type="checkbox" name="auto_extend" {{ 'checked' if not auction or auction.auto_extend }}>
-    <span><span class="t">Automatically extend on last-second bids</span><span class="d">{{ FIELD_HELP.auto_extend }}</span></span></label>
+  <h4 style="margin:18px 0 8px">How it closes</h4>
+  <label class="check"><input type="checkbox" name="auto_extend" {{ flag('auto_extend', true) }}>
+    <span><span class="t">Automatically extend on last-second bids</span>
+      <span class="d">{{ FIELD_HELP.auto_extend }}</span></span></label>
   <div class="row">
     <div class="field"><label for="extend_trigger_minutes">Extend if a bid lands in the last… (minutes)</label>
       <input id="extend_trigger_minutes" type="number" step="0.5" min="0" name="extend_trigger_minutes"
-             value="{{ (auction.extend_trigger_seconds / 60) if auction else 2 }}"></div>
-    <div class="field"><label for="extend_by_minutes">Add this much time (minutes)</label>
+             value="{{ pf.extend_trigger_minutes if pf else ((auction.extend_trigger_seconds / 60) if auction else 2) }}"></div>
+    <div class="field {{ 'bad' if error_field == 'extend_by_minutes' }}">
+      <label for="extend_by_minutes">Add this much time (minutes)</label>
       <input id="extend_by_minutes" type="number" step="0.5" min="0" name="extend_by_minutes"
-             value="{{ (auction.extend_by_seconds / 60) if auction else 3 }}"></div>
-    <div class="field"><label for="max_extensions">Maximum number of extensions</label>
+             value="{{ pf.extend_by_minutes if pf else ((auction.extend_by_seconds / 60) if auction else 3) }}"></div>
+    <div class="field"><label for="max_extensions">Most times the clock can move</label>
       <input id="max_extensions" type="number" min="0" name="max_extensions"
-             value="{{ auction.max_extensions if auction else 5 }}">
+             value="{{ pf.max_extensions if pf else (auction.max_extensions if auction else 5) }}">
       <p class="hint">{{ FIELD_HELP.max_extensions }}</p></div>
   </div>
+</section>
 
-  <label class="check"><input type="checkbox" name="requires_approval" {{ 'checked' if auction and auction.requires_approval }}>
-    <span><span class="t">Send to an approver before it goes live</span><span class="d">{{ FIELD_HELP.requires_approval }}</span></span></label>
-</div>
-
-<div class="btn-row" style="position:sticky;bottom:10px;background:rgba(246,247,249,.9);padding:10px;border-radius:12px;backdrop-filter:blur(6px)">
-  <button class="btn" type="submit">{{ 'Save changes' if auction else 'Save as draft' }}</button>
+<div class="actionbar">
+  <button class="btn lg" type="submit">{{ 'Save changes' if auction else 'Save as draft' }}</button>
   <a class="btn ghost" href="{{ '/auctions/' ~ auction.id if auction else '/auctions' }}">Cancel</a>
-  <span class="muted small">Nothing is emailed until you publish.</span>
+  <span class="muted small" style="flex:1">Nothing is emailed until you press Publish on the next screen.</span>
 </div>
 </form>
 
-<!-- inline create modals ------------------------------------------------- -->
+<!-- inline create ---------------------------------------------------------- -->
 <div class="modal" id="m-vendor"><div class="panel">
   <h3>New vendor</h3><p class="muted small">A name and an email is all we need.</p>
   <form data-quick action="/masters/quick/vendor" data-target="#vendor-list">
@@ -188,20 +253,18 @@
       <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
     <div class="field"><label>Main email</label><input type="email" name="email" required>
       <p class="hint">{{ FIELD_HELP.vendor_email }}</p></div>
-    <div class="field"><label>Also email <span class="muted small">(optional, one per line)</span></label>
-      <textarea name="extra_emails" rows="2" placeholder="sales@vendor.com"></textarea>
-      <p class="hint">{{ FIELD_HELP.vendor_extra_emails }}</p></div>
-    <div class="field"><label>Phone <span class="muted small">(optional)</span></label><input name="phone"></div>
+    <div class="field"><label>Also email <span class="optional">(optional, one per line)</span></label>
+      <textarea name="extra_emails" rows="2" placeholder="sales@vendor.com"></textarea></div>
     <div class="btn-row"><button class="btn" type="submit">Save and select</button>
       <button class="btn ghost" type="button" onclick="closeModal()">Cancel</button></div>
   </form></div></div>
 
 <div class="modal" id="m-item"><div class="panel">
-  <h3>New item</h3><p class="muted small">Just a name for now — you can fill in the rest later.</p>
+  <h3>New item</h3><p class="muted small">Just a name for now — the rest can wait.</p>
   <form data-quick action="/masters/quick/item" data-target=".sel-item">
     <div class="field"><label>Item name</label><input name="name" required>
       <p class="hint">{{ FIELD_HELP.item_name }}</p></div>
-    <div class="field"><label>Default unit <span class="muted small">(optional)</span></label>
+    <div class="field"><label>Default unit <span class="optional">(optional)</span></label>
       <select name="default_unit_id"><option value="">—</option>
         {% for unit in units %}<option value="{{ unit.id }}">{{ unit.code }}</option>{% endfor %}</select></div>
     <div class="btn-row"><button class="btn" type="submit">Save and select</button>
@@ -213,27 +276,97 @@
   <form data-quick action="/masters/quick/unit" data-target=".sel-unit">
     <div class="field"><label>Short code</label><input name="code" required placeholder="KG">
       <p class="hint">{{ FIELD_HELP.unit_code }}</p></div>
-    <div class="field"><label>Full name <span class="muted small">(optional)</span></label>
+    <div class="field"><label>Full name <span class="optional">(optional)</span></label>
       <input name="name" placeholder="Kilogram"></div>
     <div class="btn-row"><button class="btn" type="submit">Save and select</button>
       <button class="btn ghost" type="button" onclick="closeModal()">Cancel</button></div>
   </form></div></div>
 
 <template id="line-template">
-  <div class="line-item">
-    <div class="li-head"><span class="li-num">+</span><b>Item</b>
-      <span class="spacer" style="flex:1"></span>
-      <button type="button" class="linkbtn" onclick="removeLineRow(this)">Remove</button></div>
+  <div class="item-row">
+    <div class="top"><span class="li-num">+</span><b>Item</b><span style="flex:1"></span>
+      <button type="button" class="linkbtn quiet" onclick="removeLineRow(this)">Remove</button></div>
     <div class="row">
-      <div style="flex:2"><label>Item</label>
-        <select name="line_item_id" class="sel-item" data-autoselect="0" required><option value="">Choose…</option>
+      <div style="flex:2.2"><label>Item</label>
+        <select name="line_item_id" class="sel-item" data-autoselect="0">
+          <option value="">Choose an item…</option>
           {% for item in items %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></div>
-      <div><label>Unit</label><select name="line_unit_id" class="sel-unit" data-autoselect="0"><option value="">—</option>
+      <div style="max-width:120px"><label>Unit</label>
+        <select name="line_unit_id" class="sel-unit" data-autoselect="0"><option value="">—</option>
           {% for unit in units %}<option value="{{ unit.id }}">{{ unit.code }}</option>{% endfor %}</select></div>
-      <div><label>Quantity</label><input type="number" step="any" min="0.0001" name="line_qty" value="1" required></div>
-      <div><label>Starting price ({{ currency }})</label><input type="number" step="0.01" min="0.01" name="line_price" required></div>
+      <div style="max-width:150px"><label>Quantity</label>
+        <input type="number" step="any" min="0.0001" name="line_qty" value="1"></div>
+      <div style="max-width:190px"><label>Starting price <span class="optional">(optional)</span></label>
+        <input type="number" step="0.01" min="0.01" name="line_price" placeholder="No ceiling"></div>
     </div>
-    <input type="text" name="line_spec" placeholder="Specification (optional)" style="margin-top:8px">
+    <input type="text" name="line_spec" placeholder="Specification (optional)" style="margin-top:9px">
   </div>
 </template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Catch the obvious mistakes before the page reloads, so nothing typed is lost.
+(function () {
+  var form = document.getElementById("auction-form");
+  form.addEventListener("submit", function (e) {
+    var problems = [];
+    var title = form.querySelector("#title");
+    if (!title.value.trim()) problems.push([title, "Give the auction a title."]);
+
+    var rows = form.querySelectorAll("#line-rows .item-row");
+    var chosen = 0;
+    rows.forEach(function (row, i) {
+      var item = row.querySelector("[name=line_item_id]");
+      var qty = row.querySelector("[name=line_qty]");
+      var price = row.querySelector("[name=line_price]");
+      if (!item.value) { problems.push([item, "Item " + (i + 1) + ": choose an item, or remove the row."]); return; }
+      chosen++;
+      if (!qty.value || parseFloat(qty.value) <= 0)
+        problems.push([qty, "Item " + (i + 1) + ": the quantity has to be more than zero."]);
+      if (price.value && parseFloat(price.value) <= 0)
+        problems.push([price, "Item " + (i + 1) + ": leave the starting price empty, or make it more than zero."]);
+    });
+    if (!chosen) problems.push([rows[0] && rows[0].querySelector("[name=line_item_id]"),
+                                "Add at least one item — an auction needs something to bid on."]);
+
+    if (!form.querySelectorAll("[name=vendor_ids]:checked").length)
+      problems.push([document.getElementById("vendor-list"),
+                     "Tick at least one bidder. Only invited vendors can see the auction."]);
+
+    var start = form.querySelector("#start_at"), end = form.querySelector("#end_at");
+    if (!start.value) problems.push([start, "Set the time bidding opens."]);
+    else if (!end.value) problems.push([end, "Set the time bidding closes."]);
+    else if (end.value <= start.value)
+      problems.push([end, "The auction closes before it opens. Set the closing time later."]);
+
+    if (problems.length) {
+      e.preventDefault();
+      showProblem(problems[0][0], problems[0][1]);
+    }
+  });
+
+  function showProblem(el, message) {
+    document.querySelectorAll(".field.bad").forEach(function (f) { f.classList.remove("bad"); });
+    var banner = document.getElementById("form-error");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "form-error";
+      banner.className = "alert error";
+      banner.setAttribute("role", "alert");
+      banner.innerHTML = '<svg><use href="#i-alert"/></svg><div></div>';
+      form.parentNode.insertBefore(banner, form);
+    }
+    banner.querySelector("div").innerHTML = "<b>Not quite ready.</b> " + message;
+    if (el) {
+      var field = el.closest(".field");
+      if (field) field.classList.add("bad");
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (el.focus) setTimeout(function () { el.focus(); }, 250);
+    } else {
+      banner.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+})();
+</script>
 {% endblock %}

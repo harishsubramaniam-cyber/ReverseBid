@@ -21,8 +21,12 @@ def login_form(request: Request, next: str = "/", db: Session = Depends(get_db))
 
 
 @router.post("/login")
-def login(request: Request, email: str = Form(...), password: str = Form(...),
+def login(request: Request, email: str = Form(""), password: str = Form(""),
           next: str = Form("/"), db: Session = Depends(get_db)):
+    if not email.strip() or not password:
+        return render(request, "login.html",
+                      {"next": next, "error": "Please type both your email and your password.",
+                       "email": email})
     user = db.query(User).filter(User.email == email.strip().lower()).first()
     if not user or not verify_password(password, user.password_hash) or not user.is_active:
         return render(request, "login.html",
@@ -42,10 +46,14 @@ def signup_form(request: Request):
 
 
 @router.post("/signup")
-def signup(request: Request, name: str = Form(...), email: str = Form(...),
-           password: str = Form(...), account_type: str = Form("buyer"),
+def signup(request: Request, name: str = Form(""), email: str = Form(""),
+           password: str = Form(""), account_type: str = Form("buyer"),
            company: str = Form(""), db: Session = Depends(get_db)):
     email = email.strip().lower()
+    if not name.strip() or not email:
+        return render(request, "signup.html",
+                      {"error": "Please fill in your name and email address.",
+                       "name": name, "email": email})
     if db.query(User).filter(User.email == email).first():
         return render(request, "signup.html",
                       {"error": "There is already an account with that email.",

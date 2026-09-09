@@ -15,7 +15,7 @@ router = APIRouter(prefix="/auctions")
 
 
 @router.post("/{auction_id}/messages")
-def post_message(auction_id: int, request: Request, body: str = Form(...),
+def post_message(auction_id: int, request: Request, body: str = Form(""),
                  vendor_id: int = Form(0), user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)

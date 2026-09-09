@@ -94,7 +94,6 @@ The setup created a small demo company with real-looking auctions. Use any of th
 | Who you are | Email | Password |
 | --- | --- | --- |
 | **The buyer** (runs auctions) | `buyer@demo.in` | `demo1234` |
-| The approver | `approver@demo.in` | `demo1234` |
 | A bidder | `vendor1@demo.in` | `demo1234` |
 | Another bidder | `vendor2@demo.in` | `demo1234` |
 
