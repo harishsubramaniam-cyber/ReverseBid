@@ -21,20 +21,35 @@ def _to_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _window(date_from: str, date_to: str) -> tuple[datetime, datetime]:
+def _window(date_from: str, date_to: str) -> tuple[datetime, datetime, str, str]:
+    """Turn the two date boxes into a UTC range, plus the local dates to show back.
+
+    Returns (start_utc, end_utc, from_label, to_label). A date that will not
+    parse falls back to the default month rather than crashing the page.
+    """
     today = datetime.now(TZ).date()
-    start_date = datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else today.replace(day=1)
-    end_date = datetime.strptime(date_to, "%Y-%m-%d").date() if date_to else today
+
+    def parse(value: str, fallback):
+        try:
+            return datetime.strptime(value.strip(), "%Y-%m-%d").date() if value else fallback
+        except ValueError:
+            return fallback
+
+    start_date = parse(date_from, today.replace(day=1))
+    end_date = parse(date_to, today)
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
     start = datetime.combine(start_date, time.min, tzinfo=TZ)
     end = datetime.combine(end_date, time.max, tzinfo=TZ)
-    return _to_utc(start), _to_utc(end)
+    return (_to_utc(start), _to_utc(end),
+            start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
 
 @router.get("")
 def reports_home(request: Request, date_from: str = "", date_to: str = "",
                  include_closed: str = "", user: User = Depends(buyer_side),
                  db: Session = Depends(get_db)):
-    start, end = _window(date_from, date_to)
+    start, end, from_label, to_label = _window(date_from, date_to)
     statuses = [AuctionStatus.AWARDED]
     if include_closed:
         statuses.append(AuctionStatus.CLOSED)
@@ -45,8 +60,7 @@ def reports_home(request: Request, date_from: str = "", date_to: str = "",
                   .order_by(Auction.start_at.desc()).limit(100).all())
     return render(request, "reports.html",
                   {"data": data, "auctions": auctions,
-                   "date_from": date_from or start.strftime("%Y-%m-%d"),
-                   "date_to": date_to or datetime.now(TZ).strftime("%Y-%m-%d"),
+                   "date_from": from_label, "date_to": to_label,
                    "include_closed": bool(include_closed)},
                   user=user, db=db, help_key="reports")
 
@@ -55,10 +69,10 @@ def reports_home(request: Request, date_from: str = "", date_to: str = "",
 def savings_download(fmt: str, date_from: str = "", date_to: str = "",
                      include_closed: str = "", user: User = Depends(buyer_side),
                      db: Session = Depends(get_db)):
-    start, end = _window(date_from, date_to)
+    start, end, from_label, to_label = _window(date_from, date_to)
     statuses = [AuctionStatus.AWARDED] + ([AuctionStatus.CLOSED] if include_closed else [])
     data = reporting.total_savings(db, start, end, tuple(statuses))
-    stamp = f"{start:%Y%m%d}-{end:%Y%m%d}"
+    stamp = f"{from_label.replace('-', '')}-{to_label.replace('-', '')}"
     if fmt == "csv":
         return Response(reporting.savings_csv(data), media_type="text/csv",
                         headers={"Content-Disposition":

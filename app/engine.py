@@ -10,6 +10,7 @@ House rules (all configurable per auction):
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -40,6 +41,16 @@ def best_per_vendor(db: Session, line_id: int) -> list[Bid]:
         if bid.vendor_id not in seen:
             seen[bid.vendor_id] = bid
     return sorted(seen.values(), key=lambda b: (b.unit_price, b.created_at))
+
+
+def highest_bid(db: Session, line_id: int) -> Bid | None:
+    """The worst price anyone offered - the opening price, in practice.
+
+    Deliberately not ``best_per_vendor(...)[-1]``: that is the highest of each
+    vendor's *lowest* bids, which is a different (and much smaller) number.
+    """
+    bids = line_bids(db, line_id)
+    return bids[-1] if bids else None
 
 
 def best_bid(db: Session, line_id: int) -> Bid | None:
@@ -102,8 +113,8 @@ def line_baseline(db: Session, line: AuctionLine) -> float:
     """
     if line.has_ceiling:
         return line.qty * line.starting_price
-    ranked = best_per_vendor(db, line.id)
-    return line.qty * ranked[-1].unit_price if ranked else 0.0
+    top = highest_bid(db, line.id)
+    return line.qty * top.unit_price if top else 0.0
 
 
 def auction_baseline(db: Session, auction: Auction) -> float:
@@ -170,8 +181,10 @@ def place_bid(db: Session, auction: Auction, line: AuctionLine, user: User,
     if not db.query(Participant).filter_by(auction_id=auction.id,
                                            vendor_id=user.vendor_id).first():
         raise BidError("You are not on the invited bidder list for this auction.")
-    if unit_price is None or unit_price <= 0:
-        raise BidError("Enter a price greater than zero.")
+    if unit_price is None or not math.isfinite(unit_price) or unit_price <= 0:
+        raise BidError("Enter a real price greater than zero.")
+    if unit_price > 1e12:
+        raise BidError("That price is too large to be real. Check for an extra digit.")
 
     unit_price = round(float(unit_price), 2)
     window = bid_window(db, auction, line)
@@ -227,8 +240,9 @@ def place_bid(db: Session, auction: Auction, line: AuctionLine, user: User,
 
 def withdraw_bid(db: Session, bid: Bid, user: User, reason: str = "", ip: str = "") -> None:
     auction = bid.auction
-    if auction.status != AuctionStatus.LIVE:
-        raise BidError("Bids can only be withdrawn while the auction is still live.")
+    if auction.status != AuctionStatus.LIVE or datetime.utcnow() >= auction.end_at:
+        raise BidError("Bidding has finished, so bids can no longer be withdrawn. "
+                       "Speak to the buyer if this bid was a mistake.")
     if user.vendor_id != bid.vendor_id and not user.is_buyer_side:
         raise BidError("You can only withdraw your own bids.")
     bid.withdrawn = True
@@ -269,7 +283,7 @@ def maybe_extend(db: Session, auction: Auction, actor: User | None = None) -> bo
 def line_result(db: Session, line: AuctionLine) -> dict:
     ranked = best_per_vendor(db, line.id)
     lowest = ranked[0] if ranked else None
-    highest = ranked[-1] if ranked else None
+    highest = highest_bid(db, line.id)
     final_unit = lowest.unit_price if lowest else (line.starting_price or 0.0)
     baseline = line_baseline(db, line)
     final_value = final_unit * line.qty

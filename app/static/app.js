@@ -1,53 +1,123 @@
-/* ReverseBid - small, dependency-free front-end helpers. */
+/* ReverseBid — small, dependency-free front-end helpers.
+ *
+ * One rule runs through this file: the live board is replaced wholesale every
+ * few seconds by the poller, so nothing inside it may rely on a listener bound
+ * at page load. Every handler here is delegated from `document`.
+ */
 (function () {
   "use strict";
+
+  var $ = function (sel, root) { return (root || document).querySelector(sel); };
+  var $$ = function (sel, root) {
+    return Array.prototype.slice.call((root || document).querySelectorAll(sel));
+  };
 
   // ---------------------------------------------------------------- countdown
   function pad(n) { return String(n).padStart(2, "0"); }
 
   function tickClocks() {
-    document.querySelectorAll("[data-deadline]").forEach(function (el) {
+    $$("[data-deadline]").forEach(function (el) {
       var end = parseInt(el.dataset.deadline, 10) * 1000;
+      if (!end) return;
       var left = Math.max(0, Math.floor((end - Date.now()) / 1000));
       var d = Math.floor(left / 86400), h = Math.floor((left % 86400) / 3600),
           m = Math.floor((left % 3600) / 60), s = left % 60;
       el.textContent = d > 0 ? d + "d " + pad(h) + ":" + pad(m) + ":" + pad(s)
                              : pad(h) + ":" + pad(m) + ":" + pad(s);
       el.classList.toggle("urgent", left > 0 && left < 300);
-      if (left === 0 && !el.dataset.done) {
-        el.dataset.done = "1";
-        el.textContent = "Closed";
-        setTimeout(function () { location.reload(); }, 1500);
+      if (left === 0) {
+        el.textContent = "Closing…";
+        // Reload once per deadline. Without the guard an auction that is still
+        // LIVE until the next scheduler tick would reload in a loop.
+        var key = "ra-closed-" + location.pathname + "-" + el.dataset.deadline;
+        try {
+          if (!sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, "1");
+            setTimeout(function () { location.reload(); }, 2500);
+          }
+        } catch (e) { /* private window: just leave the clock at Closing… */ }
       }
     });
   }
-  setInterval(tickClocks, 1000); tickClocks();
+  setInterval(tickClocks, 1000);
+  tickClocks();
 
   // ---------------------------------------------------------------- live board
   var board = document.getElementById("live-board");
   if (board && board.dataset.src) {
     setInterval(function () {
       if (document.hidden) return;
-      if (document.activeElement && ["INPUT", "TEXTAREA"].indexOf(document.activeElement.tagName) > -1) return;
       fetch(board.dataset.src, { headers: { "X-Partial": "1" } })
         .then(function (r) { return r.ok ? r.text() : null; })
-        .then(function (html) { if (html) { board.innerHTML = html; tickClocks(); } })
-        .catch(function () {});
+        .then(function (html) { if (html) swapBoard(html); })
+        .catch(function () { /* offline for a moment: try again next tick */ });
     }, 4000);
   }
 
+  function swapBoard(html) {
+    // Keep what the person is doing: the focused field, the caret, and every
+    // price they have typed but not yet submitted.
+    var active = document.activeElement;
+    var focusedName = (active && board.contains(active)) ? active.id : null;
+    var caret = focusedName && active.selectionStart;
+    var typed = {};
+    $$("input, textarea", board).forEach(function (el) {
+      if (el.id && el.value) typed[el.id] = el.value;
+    });
+
+    board.innerHTML = html;
+
+    $$("input, textarea", board).forEach(function (el) {
+      if (el.id && typed[el.id] !== undefined) el.value = typed[el.id];
+    });
+    if (focusedName) {
+      var again = document.getElementById(focusedName);
+      if (again) {
+        again.focus();
+        try { again.setSelectionRange(caret, caret); } catch (e) { /* not a text input */ }
+      }
+    }
+
+    // The header clock and the status pill live outside the board, so the
+    // fragment carries the current values for them.
+    var state = document.getElementById("board-state");
+    var header = $(".countdown [data-deadline]");
+    if (state && header && state.dataset.deadline &&
+        header.dataset.deadline !== state.dataset.deadline) {
+      header.dataset.deadline = state.dataset.deadline;   // auto-extension
+      delete header.dataset.done;
+    }
+    if (state && state.dataset.status && state.dataset.status !== "live") {
+      location.reload();                                   // it has closed
+    }
+    tickClocks();
+  }
+
   // ---------------------------------------------------------------- drawers
-  function openDrawer(id) {
-    document.getElementById(id).classList.add("open");
-    document.getElementById("scrim").classList.add("on");
-  }
-  function closeDrawers() {
-    document.querySelectorAll(".drawer").forEach(function (d) { d.classList.remove("open"); });
-    document.getElementById("scrim").classList.remove("on");
-  }
-  window.openDrawer = openDrawer;
-  window.closeDrawers = closeDrawers;
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closeDrawers(); closeModal(); } });
+  window.openDrawer = function (id) {
+    var drawer = document.getElementById(id);
+    if (drawer) drawer.classList.add("open");
+    var scrim = document.getElementById("scrim");
+    if (scrim) scrim.classList.add("on");
+  };
+  window.closeDrawers = function () {
+    $$(".drawer").forEach(function (d) { d.classList.remove("open"); });
+    var scrim = document.getElementById("scrim");
+    if (scrim) scrim.classList.remove("on");
+  };
+  window.openModal = function (id) {
+    var m = document.getElementById(id);
+    if (m) m.classList.add("on");
+  };
+  window.closeModal = function () {
+    $$(".modal").forEach(function (m) { m.classList.remove("on"); });
+  };
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { window.closeDrawers(); window.closeModal(); }
+  });
+  document.addEventListener("click", function (e) {
+    if (e.target.classList && e.target.classList.contains("modal")) window.closeModal();
+  });
 
   // ---------------------------------------------------------------- assistant
   var askForm = document.getElementById("ask-form");
@@ -59,82 +129,85 @@
       var q = input.value.trim();
       if (!q) return;
       var mine = document.createElement("div");
-      mine.className = "chat-msg you"; mine.textContent = q;
-      log.appendChild(mine); input.value = "";
+      mine.className = "chat-msg you";
+      mine.textContent = q;
+      log.appendChild(mine);
+      input.value = "";
       log.scrollTop = log.scrollHeight;
-      fetch("/assistant/ask", { method: "POST", body: new URLSearchParams({ question: q, context: askForm.dataset.context || "" }) })
+      fetch("/assistant/ask", {
+        method: "POST",
+        body: new URLSearchParams({ question: q, context: askForm.dataset.context || "" }),
+      })
         .then(function (r) { return r.text(); })
         .then(function (html) {
           var wrap = document.createElement("div");
           wrap.innerHTML = html;
           log.appendChild(wrap);
           log.scrollTop = log.scrollHeight;
-        });
+        })
+        .catch(function () { toast("The assistant is not answering right now.", true); });
     });
   }
   window.askThis = function (text) {
-    var input = document.querySelector("#ask-form input[name=question]");
+    var input = $("#ask-form input[name=question]");
     if (!input) return;
     input.value = text;
-    document.getElementById("ask-form").dispatchEvent(new Event("submit"));
+    askForm.dispatchEvent(new Event("submit"));
   };
 
-  // ---------------------------------------------------------------- modals
-  function openModal(id) { document.getElementById(id).classList.add("on"); }
-  function closeModal() { document.querySelectorAll(".modal").forEach(function (m) { m.classList.remove("on"); }); }
-  window.openModal = openModal;
-  window.closeModal = closeModal;
-  document.querySelectorAll(".modal").forEach(function (m) {
-    m.addEventListener("click", function (e) { if (e.target === m) closeModal(); });
-  });
-
-  // ------------------------------------------------- inline (Odoo-style) create
-  document.querySelectorAll("form[data-quick]").forEach(function (form) {
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var target = form.dataset.target;      // css selector of selects to extend
-      fetch(form.action, { method: "POST", body: new FormData(form) })
-        .then(function (r) {
-          return r.json().then(function (data) {
-            if (!r.ok) throw new Error(data.error || "That could not be saved.");
-            return data;
-          });
-        })
-        .then(function (data) {
-          document.querySelectorAll(target).forEach(function (sel) {
-            if (sel.tagName === "SELECT") {
-              var opt = new Option(data.label, data.id, false, false);
-              sel.add(opt);
-              if (sel.dataset.autoselect !== "0") sel.value = data.id;
-            } else if (sel.tagName === "DIV") {
-              var row = document.createElement("div");
-              row.className = "vendor-row";
-              row.innerHTML =
-                '<label class="check" style="margin-bottom:0">' +
-                '<input type="checkbox" name="vendor_ids" value="' + data.id + '" checked>' +
-                '<span><span class="t">' + data.label + '</span>' +
-                '<span class="d">Emails go to ' + (data.emails || "") + '</span></span></label>' +
-                '<div class="vendor-override"><input type="text" name="notify_emails_' + data.id +
-                '" placeholder="Send this auction to a different address (optional)"></div>';
-              sel.prepend(row);
-            }
-          });
-          form.reset();
-          closeModal();
-          toast("Saved and selected.");
-        })
-        .catch(function (err) { toast(err.message || "Could not save that.", true); });
-    });
+  // ------------------------------------------- inline (Odoo-style) create
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form.matches || !form.matches("form[data-quick]")) return;
+    e.preventDefault();
+    var target = form.dataset.target;
+    fetch(form.action, { method: "POST", body: new FormData(form) })
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error(data.error || "That could not be saved.");
+          return data;
+        });
+      })
+      .then(function (data) {
+        var picked = false;
+        $$(target).forEach(function (el) {
+          if (el.tagName === "SELECT") {
+            el.add(new Option(data.label, data.id, false, false));
+            // Only fill the FIRST empty dropdown. Selecting it everywhere would
+            // silently re-point item rows the buyer had already chosen.
+            if (!picked && !el.value) { el.value = data.id; picked = true; }
+          } else if (el.tagName === "DIV") {
+            var row = document.createElement("div");
+            row.className = "vendor-row";
+            row.innerHTML =
+              '<label class="check" style="margin-bottom:0">' +
+              '<input type="checkbox" name="vendor_ids" value="' + data.id + '" checked>' +
+              '<span><span class="t"></span><span class="d"></span></span></label>' +
+              '<div class="vendor-override"><input type="text" name="notify_emails_' +
+              data.id + '" placeholder="Send this auction to a different address (optional)">' +
+              "</div>";
+            row.querySelector(".t").textContent = data.label;
+            row.querySelector(".d").textContent = "Emails go to " + (data.emails || "");
+            el.prepend(row);
+            picked = true;
+          }
+        });
+        form.reset();
+        window.closeModal();
+        toast(picked ? "Saved and selected." : "Saved — pick it from the list.");
+      })
+      .catch(function (err) { toast(err.message || "Could not save that.", true); });
   });
 
   // ---------------------------------------------------------------- toast
   function toast(message, bad) {
     var el = document.createElement("div");
     el.className = "alert " + (bad ? "error" : "ok");
-    el.style.cssText = "position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:90;box-shadow:0 10px 30px rgba(15,23,42,.18)";
+    el.style.cssText = "position:fixed;bottom:22px;left:50%;transform:translateX(-50%);" +
+      "z-index:90;box-shadow:0 12px 34px rgba(14,26,28,.22);max-width:90vw";
     el.textContent = message;
     document.body.appendChild(el);
-    setTimeout(function () { el.remove(); }, 3200);
+    setTimeout(function () { el.remove(); }, 3400);
   }
   window.toast = toast;
 
@@ -142,49 +215,60 @@
   window.addLineRow = function () {
     var body = document.getElementById("line-rows");
     var template = document.getElementById("line-template");
-    var node = template.content.cloneNode(true);
-    body.appendChild(node);
+    if (!body || !template) return;
+    body.appendChild(template.content.cloneNode(true));
     renumberLines();
   };
   window.removeLineRow = function (btn) {
-    var rows = document.querySelectorAll("#line-rows .line-item");
-    if (rows.length <= 1) { toast("An auction needs at least one item.", true); return; }
-    btn.closest(".line-item").remove();
+    var rows = $$("#line-rows .item-row");
+    if (rows.length <= 1) {
+      toast("An auction needs at least one item.", true);
+      return;
+    }
+    btn.closest(".item-row").remove();
     renumberLines();
   };
   function renumberLines() {
-    document.querySelectorAll("#line-rows .line-item").forEach(function (row, i) {
+    $$("#line-rows .item-row").forEach(function (row, i) {
       var badge = row.querySelector(".li-num");
+      var label = row.querySelector(".top b");
       if (badge) badge.textContent = i + 1;
+      if (label) label.textContent = "Item " + (i + 1);
     });
   }
   window.renumberLines = renumberLines;
 
-  // ---------------------------------------------- confirm on dangerous actions
-  document.querySelectorAll("form[data-confirm]").forEach(function (form) {
-    form.addEventListener("submit", function (e) {
-      if (!window.confirm(form.dataset.confirm)) e.preventDefault();
-    });
+  // ---------------------------------------------- delegated click handlers
+  document.addEventListener("click", function (e) {
+    var fill = e.target.closest ? e.target.closest("[data-fill]") : null;
+    if (fill) {
+      var input = $(fill.dataset.fillTarget);
+      if (input) {
+        input.value = fill.dataset.fill;
+        input.focus();
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
   });
 
-  // --------------------------------------------- show the line total as you type
+  // ---------------------------------------------- confirm before the big ones
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (form.matches && form.matches("form[data-confirm]")) {
+      if (!window.confirm(form.dataset.confirm)) e.preventDefault();
+    }
+  }, true);
+
+  // ---------------------------------------------- live line total as you type
   document.addEventListener("input", function (e) {
     var input = e.target;
     if (!input.dataset || !input.dataset.total) return;
     var out = document.getElementById(input.dataset.total);
     if (!out) return;
     var price = parseFloat(input.value), qty = parseFloat(input.dataset.qty || "0");
-    out.textContent = (price > 0 && qty > 0)
+    out.textContent = (isFinite(price) && price > 0 && qty > 0)
       ? "That is " + (price * qty).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
-        " for the whole line."
+        " for all " + qty.toLocaleString() + "."
       : "";
-  });
-
-  // ------------------------------------------------- quick-fill the bid input
-  document.querySelectorAll("[data-fill]").forEach(function (el) {
-    el.addEventListener("click", function () {
-      var input = document.querySelector(el.dataset.fillTarget);
-      if (input) { input.value = el.dataset.fill; input.focus(); }
-    });
   });
 })();

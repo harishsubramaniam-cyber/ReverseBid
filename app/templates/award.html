@@ -127,16 +127,17 @@
 {% block scripts %}
 <script>
 // Choosing a winner fills that line's price with their bid.
-document.querySelectorAll("input[type=radio][data-line]").forEach(function (radio) {
-  radio.addEventListener("change", function () {
-    var box = document.getElementById("price_" + radio.dataset.line);
-    if (box && radio.dataset.price) box.value = radio.dataset.price;
-    document.querySelectorAll('input[name="' + radio.name + '"]').forEach(function (r) {
-      var row = r.closest("tr");
-      if (row) row.classList.toggle("is-best", r.checked && !!r.value);
-      var label = r.parentNode.querySelector(".t");
-      if (label) label.textContent = r.checked ? (r.value ? "Winner" : "Skipped") : (r.value ? "Pick" : "Skip");
-    });
+document.addEventListener("change", function (e) {
+  var radio = e.target;
+  if (!radio.matches || !radio.matches("input[type=radio][data-line]")) return;
+  var box = document.getElementById("price_" + radio.dataset.line);
+  if (box && radio.dataset.price) box.value = radio.dataset.price;
+  document.querySelectorAll('input[name="' + radio.name + '"]').forEach(function (r) {
+    var row = r.closest("tr");
+    if (row) row.classList.toggle("is-best", r.checked && !!r.value);
+    var label = r.parentNode.querySelector(".t");
+    if (label) label.textContent = r.checked ? (r.value ? "Winner" : "Skipped")
+                                             : (r.value ? "Pick" : "Skip");
   });
 });
 

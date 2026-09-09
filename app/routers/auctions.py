@@ -110,7 +110,10 @@ def list_auctions(request: Request, status: str = "", q: str = "",
                       .filter(Participant.vendor_id == user.vendor_id,
                               Auction.status.in_(OPEN_TO_VENDOR)))
     if status:
-        query = query.filter(Auction.status == AuctionStatus(status))
+        try:
+            query = query.filter(Auction.status == AuctionStatus(status))
+        except ValueError:
+            status = ""          # an unknown status in the URL just means "all"
     if q:
         like = f"%{q}%"
         query = query.filter(Auction.title.ilike(like) | Auction.reference.ilike(like))
@@ -263,7 +266,7 @@ def _apply_settings(auction: Auction, form) -> None:
                                                  "The extension trigger", 2) * 60)
     auction.extend_by_seconds = int(_number(form, "extend_by_minutes",
                                             "The extension length", 3) * 60)
-    auction.max_extensions = int(_number(form, "max_extensions", "The number of extensions", 0))
+    auction.max_extensions = int(_number(form, "max_extensions", "The number of extensions", 5))
     if auction.auto_extend and auction.max_extensions and auction.extend_by_seconds <= 0:
         raise FormError("Auto-extension is on, so each extension needs to add some time.",
                         "extend_by_minutes")

@@ -136,15 +136,6 @@ PAGE_HELP = {
              "emails” link on any vendor to change the list later."),
         ],
     },
-    "approvals": {
-        "title": "Approvals",
-        "intro": "Auctions waiting for your decision. Approve to let it go live, reject to stop it, "
-                 "or send it back for rework with a comment.",
-        "tips": [
-            ("What happens after I approve?",
-             "The auction is scheduled, and invited vendors are emailed straight away."),
-        ],
-    },
     "outbox": {
         "title": "Email outbox",
         "intro": "Every email the platform has produced, newest first. If no mail server is "

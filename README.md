@@ -204,7 +204,8 @@ Two design notes worth knowing:
 ## Tests
 
 ```bash
-python tests/test_end_to_end.py      # or: python -m pytest -q
+python tests/test_end_to_end.py      # the happy path, end to end
+python tests/test_hostile.py         # every way a person can get it wrong
 ```
 
 It builds a throwaway database and walks a whole auction: masters, inline create, publishing,

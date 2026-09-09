@@ -142,8 +142,9 @@
       </tbody></table></div>
       <h3 style="margin-top:14px">Copied on this auction</h3>
       {% if cc_list %}
-        <p class="small">{% for address in cc_list %}<div>{{ address }}</div>{% endfor %}
-          <span class="muted">They get a copy when it is published, closed, awarded or cancelled.</span></p>
+        <ul class="plain small" style="margin:0 0 6px; padding-left:18px">
+          {% for address in cc_list %}<li>{{ address }}</li>{% endfor %}</ul>
+        <p class="muted small">They get a copy when it is published, closed, awarded or cancelled.</p>
       {% else %}
         <p class="muted small">Nobody on your side is copied.
           {% if auction.editable %}<a href="/auctions/{{ auction.id }}/edit">Add someone</a>.{% endif %}</p>

@@ -11,9 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config, migrate, scheduler
-from .db import Base, engine
+from .db import Base, SessionLocal, engine
 from .routers import (assistant, auctions, auth, awards, bidding, dashboard,
                       masters, messages, notifications, reports)
+from .security import current_user_optional
 from .web import render
 
 
@@ -64,9 +65,17 @@ def _wants_html(request: Request) -> bool:
 def _error_screen(request: Request, code: int, detail: str = ""):
     title, fallback = FRIENDLY.get(code, ("Something went wrong", "Please try again."))
     message = detail if isinstance(detail, str) and detail else fallback
-    return render(request, "error.html",
-                  {"code": code, "title": title, "message": message},
-                  status_code=code)
+    # Keep the navigation on the page: being lost is bad enough without also
+    # losing the menu. The session lookup needs its own short-lived db handle.
+    user = None
+    db = SessionLocal()
+    try:
+        user = current_user_optional(request, db)
+        return render(request, "error.html",
+                      {"code": code, "title": title, "message": message},
+                      user=user, db=db if user else None, status_code=code)
+    finally:
+        db.close()
 
 
 @app.exception_handler(StarletteHTTPException)

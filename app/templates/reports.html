@@ -1,5 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Reports — {{ app_name }}{% endblock %}
+
+{% block scripts %}
+<script>
+// Keep the download links in step with the date boxes, so changing a date and
+// pressing Download cannot quietly hand you the previous period's numbers.
+(function () {
+  var from = document.getElementById("date_from");
+  var to = document.getElementById("date_to");
+  var closed = document.querySelector("input[name=include_closed]");
+  function sync() {
+    var q = "?date_from=" + encodeURIComponent(from.value) +
+            "&date_to=" + encodeURIComponent(to.value) +
+            "&include_closed=" + (closed && closed.checked ? "1" : "");
+    document.getElementById("dl-pdf").href = "/reports/savings.pdf" + q;
+    document.getElementById("dl-csv").href = "/reports/savings.csv" + q;
+  }
+  [from, to, closed].forEach(function (el) { if (el) el.addEventListener("change", sync); });
+  sync();
+})();
+</script>
+{% endblock %}
 {% block wrapclass %}wide{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><h1>Reports</h1>
@@ -17,8 +38,8 @@
         <span class="d">Uses the lowest bid instead of the awarded price.</span></span></label>
     <button class="btn ghost" type="submit">Run report</button>
     <span class="spacer" style="flex:1"></span>
-    <a class="btn" href="/reports/savings.pdf?date_from={{ date_from }}&date_to={{ date_to }}&include_closed={{ '1' if include_closed else '' }}">Download PDF</a>
-    <a class="btn ghost" href="/reports/savings.csv?date_from={{ date_from }}&date_to={{ date_to }}&include_closed={{ '1' if include_closed else '' }}">Download CSV</a>
+    <a class="btn" id="dl-pdf" href="/reports/savings.pdf?date_from={{ date_from }}&date_to={{ date_to }}&include_closed={{ '1' if include_closed else '' }}">Download PDF</a>
+    <a class="btn ghost" id="dl-csv" href="/reports/savings.csv?date_from={{ date_from }}&date_to={{ date_to }}&include_closed={{ '1' if include_closed else '' }}">Download CSV</a>
   </form>
 
   {% set t = data.totals %}

@@ -218,7 +218,8 @@ select{appearance:none; padding-right:34px;
 .btn.ghost{background:var(--surface); color:var(--ink); border-color:var(--line-2); box-shadow:var(--sh-1)}
 .btn.ghost:hover{background:var(--surface-2); color:var(--ink); filter:none; border-color:#AFC3C5}
 .btn.danger{background:linear-gradient(180deg,#C0293F,#A62037); box-shadow:0 1px 2px rgba(166,32,55,.25)}
-.btn.gold{background:linear-gradient(180deg,#12A05F,#0F7A4E)}
+.btn.gold,.btn.good{background:linear-gradient(180deg,#12A05F,#0F7A4E)}
+.btn.gold:hover,.btn.good:hover{filter:brightness(1.06)}
 .btn.sm{padding:6px 12px; font-size:.84rem; border-radius:var(--r-xs)}
 .btn.lg{padding:12px 22px; font-size:1rem}
 .btn.block{width:100%}
@@ -247,6 +248,7 @@ select{appearance:none; padding-right:34px;
 .empty .icon{width:52px; height:52px; margin:0 auto 12px; border-radius:50%;
   display:grid; place-items:center; background:var(--bg-2); color:var(--ink-3)}
 .empty .icon svg{width:24px; height:24px}
+.empty .big{font-size:2.2rem; line-height:1; margin-bottom:10px}
 .empty h3{color:var(--ink); margin-bottom:4px}
 
 /* ------------------------------------------------------------------ tabs */
@@ -261,7 +263,8 @@ select{appearance:none; padding-right:34px;
 .clock{font-family:var(--display); font-variant-numeric:tabular-nums; font-weight:720;
   font-size:1.4rem; letter-spacing:-.01em}
 .clock.small{font-size:1rem}
-.clock.urgent{color:#FF9AA8}
+.clock.urgent{color:var(--bad)}                  /* readable on a white card  */
+.countdown .clock.urgent{color:#FFB3BE}          /* and on the dark clock band */
 .countdown{display:flex; flex-wrap:wrap; align-items:center; gap:26px; padding:16px 20px;
   margin-bottom:18px; border-radius:var(--r-lg); color:#fff;
   background:linear-gradient(120deg,#10262B 0%,#0E1A1C 60%);
@@ -269,8 +272,6 @@ select{appearance:none; padding-right:34px;
 .countdown .k{font-size:.68rem; font-weight:750; letter-spacing:.12em; text-transform:uppercase;
   color:#8FA9AC; margin-bottom:3px}
 .countdown .val{font-size:.95rem; font-weight:600}
-.countdown .clock.urgent{color:#FFB3BE}
-
 /* ------------------------------------------------------------------ bidding */
 .bidbox{border:1px solid var(--line); border-radius:var(--r); padding:16px;
   background:linear-gradient(180deg,var(--surface),var(--surface-2))}
@@ -316,8 +317,9 @@ select{appearance:none; padding-right:34px;
   background:linear-gradient(145deg,var(--brand-2),var(--brand))}
 .step-card>.head h2{margin:0}
 .step-card>.head .spacer{flex:1}
-.item-row{border:1px solid var(--line); border-radius:var(--r); padding:14px;
+.item-row,.line-item{border:1px solid var(--line); border-radius:var(--r); padding:14px;
   margin-bottom:11px; background:var(--surface-2)}
+.line-item:hover{border-color:var(--line-2); background:var(--surface)}
 .item-row .top{display:flex; align-items:center; gap:10px; margin-bottom:10px}
 .item-row .top b{font-size:.88rem}
 
@@ -402,7 +404,12 @@ select{appearance:none; padding-right:34px;
 @media(max-width:700px){
   .topnav{display:none}
   .mobilenav{display:flex}
-  .topbar{padding:0 12px; gap:8px}
+  .topbar{padding:0 10px; gap:6px}
+  .brand{font-size:.95rem; min-width:0}
+  .brand span:not(.dot){overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .helpbtn{display:none}                 /* Help lives in the bottom bar on a phone */
+  .iconbtn{padding:6px 8px}
+  .iconbtn .label{display:none}
   .wrap{padding:16px 13px 86px}
   .card,.step-card{padding:16px; border-radius:var(--r)}
   h1{font-size:1.38rem}

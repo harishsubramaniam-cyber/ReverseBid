@@ -52,10 +52,21 @@ def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Ve
     extras = [a for a in rest + extras if a != email]
     existing = db.query(Vendor).filter(Vendor.email == email).first()
     if existing:
+        # That address is already on file. Update the record rather than
+        # quietly discarding what was just typed, and bring it back from the
+        # archive so it shows up in the auction form's bidder list.
+        existing.name = name or existing.name
+        for field, value in extra.items():
+            if value:
+                setattr(existing, field, value)
         merged = [a for a in parse(existing.extra_emails) + extras
                   if a != existing.email.lower()]
         existing.extra_emails = "\n".join(dict.fromkeys(merged))
+        existing.is_active = True
+        record(db, action="vendor.update", entity_type="vendor", entity_id=existing.id,
+               actor=user, detail={"matched_on_email": email})
         db.commit()
+        existing.reused = True
         return existing
     extra["extra_emails"] = "\n".join(dict.fromkeys(extras))
     vendor = Vendor(name=name, email=email, created_by_id=user.id,
@@ -111,8 +122,10 @@ def post_vendor(request: Request, name: str = Form(""), email: str = Form(""),
                                contact_person=contact_person, phone=phone, gstin=gstin,
                                address=address)
         count = 1 + len(parse(vendor.extra_emails))
+        note = ("Updated the existing vendor with that email address."
+                if getattr(vendor, "reused", False) else "saved.")
         return redirect("/masters?tab=vendors",
-                        f"Vendor “{vendor.name}” saved. Emails go to {count} address(es).")
+                        f"Vendor “{vendor.name}” {note} Emails go to {count} address(es).")
     except MasterProblem as exc:
         return redirect("/masters?tab=vendors", str(exc), kind="error")
 

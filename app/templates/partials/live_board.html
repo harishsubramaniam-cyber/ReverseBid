@@ -1,3 +1,7 @@
+{# The header clock and status pill sit outside this fragment, so the poller
+   reads the current values from here. #}
+<span id="board-state" hidden
+      data-deadline="{{ epoch(auction.end_at) }}" data-status="{{ auction.status.value }}"></span>
 {% set live = auction.status.value == 'live' %}
 {% set can_bid = live and user.is_vendor %}
 

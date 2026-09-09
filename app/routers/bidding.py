@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -26,9 +28,11 @@ def post_bid(auction_id: int, request: Request, line_id: str = Form(""),
     try:
         price = float(unit_price)
     except ValueError:
+        price = float("nan")
+    if not math.isfinite(price):
         return redirect(f"/auctions/{auction_id}",
-                        f"“{unit_price}” is not a price. Use digits only, like 970.50.",
-                        kind="error")
+                        f"“{unit_price.strip()[:20]}” is not a price. Use digits only, "
+                        "like 970.50.", kind="error")
     try:
         bid = place_bid(db, auction, line, user, price, note, ip=client_ip(request))
     except BidError as exc:

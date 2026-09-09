@@ -23,8 +23,8 @@ def post_message(auction_id: int, request: Request, body: str = Form(""),
         raise HTTPException(404, "That auction does not exist.")
     body = body.strip()
     if not body:
-        return redirect(f"/auctions/{auction_id}#conversation", "Write a message first.",
-                        kind="error")
+        return redirect(f"/auctions/{auction_id}?tab=conversation#conversation",
+                        "Write a message first.", kind="error")
 
     if user.is_vendor:
         vendor_id = user.vendor_id
@@ -33,8 +33,10 @@ def post_message(auction_id: int, request: Request, body: str = Form(""),
             raise HTTPException(403, "You are not a bidder on this auction.")
         recipients = [auction.creator]
     else:
-        if not vendor_id:
-            raise HTTPException(400, "Choose which bidder you are replying to.")
+        if not vendor_id or not db.query(Participant).filter_by(
+                auction_id=auction.id, vendor_id=vendor_id).first():
+            return redirect(f"/auctions/{auction_id}?tab=conversation",
+                            "Choose one of the bidders invited to this auction.", kind="error")
         recipients = notify.vendor_recipients(db, vendor_id, auction)
 
     message = Message(auction_id=auction.id, vendor_id=vendor_id, sender_id=user.id, body=body)

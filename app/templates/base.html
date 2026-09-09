@@ -46,7 +46,7 @@
   <button class="helpbtn" onclick="openDrawer('help-drawer')" title="Plain-language help for this screen">
     <svg><use href="#i-help"/></svg>Help</button>
   <button class="iconbtn" onclick="openDrawer('ask-drawer')" title="Ask the assistant">
-    <svg><use href="#i-spark"/></svg>Ask</button>
+    <svg><use href="#i-spark"/></svg><span class="label">Ask</span></button>
   <a class="iconbtn" href="/notifications" title="Alerts" aria-label="Alerts">
     <svg><use href="#i-bell"/></svg>{% if unread_count %}<span class="badge-dot">{{ unread_count }}</span>{% endif %}</a>
   <a class="iconbtn" href="/logout" title="{{ user.name }} — sign out">

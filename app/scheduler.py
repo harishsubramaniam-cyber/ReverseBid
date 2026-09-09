@@ -53,6 +53,12 @@ def tick(now: datetime | None = None) -> dict:
         for auction in db.query(Auction).filter(
                 Auction.status == AuctionStatus.LIVE,
                 Auction.end_at <= now).all():
+            # A bid may have extended the clock between the query and now, in
+            # another session. Re-read before closing, or an auto-extension
+            # would be silently thrown away.
+            db.refresh(auction)
+            if auction.status != AuctionStatus.LIVE or auction.end_at > datetime.utcnow():
+                continue
             auction.status = AuctionStatus.CLOSED
             auction.closed_at = now
             record(db, action="auction.close", entity_type="auction", entity_id=auction.id,

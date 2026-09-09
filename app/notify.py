@@ -331,7 +331,7 @@ def message_posted(db: Session, auction: Auction, recipients: list[User], sender
     return send(db, recipients, event="message", auction=auction,
                 title=f"New message on {auction.reference}",
                 paragraphs=[f"<b>{sender.name}</b> wrote:", f"<i>{preview}</i>"],
-                cta_text="Reply", link=f"/auctions/{auction.id}#conversation")
+                cta_text="Reply", link=f"/auctions/{auction.id}?tab=conversation#conversation")
 
 
 def approval_requested(db: Session, auction: Auction, requester: User) -> int:
