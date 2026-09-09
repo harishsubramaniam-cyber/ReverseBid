@@ -28,7 +28,6 @@ FIELD_HELP = {
     "extend_trigger_seconds": "A bid inside this window triggers extra time.",
     "extend_by_seconds": "How much extra time each extension adds.",
     "max_extensions": "How many times the clock can be pushed back before it must end.",
-    "requires_approval": "Send the auction to an approver before it can go live.",
     "starting_price": "The most you are willing to pay per unit. Bids have to come in at or below this.",
     "qty": "How many units you are buying. Price × quantity gives the line total.",
     "vendors": "The bidders you are inviting. Only these companies can see and bid on the auction.",
@@ -186,11 +185,12 @@ ANSWERS = [
     (["hidden", "anonymous", "names"],
      "With hidden names switched on, bidders see each other as “Bidder A”, “Bidder B” and so on. "
      "As the buyer you always see the real company names."),
-    (["award", "winner", "give the business", "split"],
+    (["award", "winner", "give the business", "split", "share between"],
      "Once bidding closes, open the **Award** screen. Every item is pre-set to its lowest bidder. "
      "You can change who wins any item, change the price, or leave an item unawarded — and one "
-     "click gives the whole auction to a single supplier. Each item goes to one bidder only, for "
-     "the full quantity. Everyone is emailed the outcome, winners and non-winners alike."),
+     "click gives the whole auction to a single supplier. Each item goes to **one** bidder only, "
+     "for the full quantity: an item cannot be split between two suppliers. Everyone is emailed "
+     "the outcome, winners and non-winners alike."),
     (["savings", "report", "download", "pdf", "csv", "excel"],
      "**Reports → Total Savings** covers every auction in a date range. **Individual Auction "
      "Summary** shows one auction with every bid, the highest and lowest price, the savings and "
@@ -199,9 +199,10 @@ ANSWERS = [
      "Every key event sends an email: invitation, auction opened, outbid, extended, closing soon, "
      "closed, awarded, and messages. If no mail server is set up, they land in the **Outbox** page "
      "so you can still see them. Add your SMTP details to the environment file to send for real."),
-    (["approval", "approve", "reject", "rework"],
-     "Tick “needs approval” when creating an auction and it goes to an approver first. They can "
-     "approve it, reject it, or send it back for rework with a comment. You are emailed the decision."),
+    (["approval", "approve", "reject", "rework", "sign off"],
+     "There is no approval step. When you press **Publish** the invitations go straight out to "
+     "your bidders. If a colleague needs to see an auction first, save it as a draft and add "
+     "them to the copy list, or send them the link — a draft is private until you publish it."),
     (["message", "chat", "conversation", "ask the buyer"],
      "Each bidder has a private thread with the buyer on the auction page. Bidders never see each "
      "other's messages, and both sides get an email for every new one."),
@@ -229,9 +230,9 @@ ANSWERS = [
 ]
 
 FALLBACK = (
-    "I can help with creating auctions, bidding rules, decrements, ranks, awarding, reports, "
-    "emails and approvals. Try asking something like *“how do decrements work?”* or "
-    "*“how do I split an award?”*"
+    "I can help with creating auctions, bidding rules, decrements, ranks, awarding, reports "
+    "and emails. Try asking something like *“how do decrements work?”* or "
+    "*“how do I choose who wins each item?”*"
 )
 
 

@@ -64,15 +64,19 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 **4 — Reports and dashboard**
 
 * Savings-first dashboard: total savings, baseline, awarded value, savings by month, closing soon.
-* **Report 1 — Total Savings** across every auction in a date range.
-* **Report 2 — Individual Auction Summary**: every bid, the highest and lowest price, line-level
-  savings and the awardee.
+* **Report 1 — Total Savings** across every auction decided in a date range — an auction
+  counts in the period it was awarded or closed in, not the period bidding opened in.
+* **Report 2 — Individual Auction Summary**: every bid — withdrawn ones included, flagged as
+  such — the highest and lowest price, line-level savings (against the awarded price once the
+  item is awarded) and the awardee.
 * Both download as **PDF** and **CSV**.
 
 **5 — Reach everyone, anywhere**
 
-* Email plus in-app notification on every key event: invitation, opening, bid received, outbid,
-  extension, closing soon, closed, awarded, not awarded, cancelled, messages, approvals.
+* Email on every key event: invitation, opening, bid received, outbid, extension, closing
+  soon, closed, awarded, not awarded, cancelled and messages — with an in-app notification
+  too for everyone who has a login (a bid confirmation is email only, since the bidder is
+  looking at the screen already).
 * You choose the recipients: several contacts per vendor, a per-auction override for one bidder,
   and a copy list for your own team. See **Who gets the emails** below.
 * Outbid alerts that pull vendors back into the auction.
@@ -85,9 +89,21 @@ Demo sign-ins (after `python seed.py`), password `demo1234`:
 * Publish goes straight to the bidders — no approval step. A future auction publishes as
   *scheduled* and can be opened early with **Start bidding now**; if the opening time has already
   passed, publishing opens it immediately.
-* Withdraw a bid, edit an auction before it opens, cancel with a reason at any time.
+* Withdraw a bid, edit an auction before it opens, cancel with a reason at any time. Editing a
+  published auction emails any bidder you add, and tells the rest what changed; cancelling a
+  draft nobody was told about emails nobody.
 * **Every failure is explained on the screen it happened on**, in plain words, with what you
   typed still in the boxes — never a raw error page or a wall of JSON.
+
+**7 — Keeping it safe**
+
+* Sessions are signed http-only cookies, marked secure automatically when `RA_BASE_URL` is
+  https. With no `RA_SECRET_KEY` set, a random one is generated and kept in `data/secret_key`
+  rather than falling back to a value published in the source.
+* Every form carries a CSRF token, so another site cannot act using someone's session.
+* Repeated wrong passwords are slowed down, per address and per computer.
+* Bidding on one item is serialised, so two bids arriving together cannot both be checked
+  against the same "current lowest" and both be accepted.
 
 ---
 
@@ -152,7 +168,7 @@ All settings are environment variables — see `app/config.py`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RA_DATABASE_URL` | `sqlite:///data/reverse_auction.db` | Any SQLAlchemy URL; PostgreSQL works unchanged |
-| `RA_SECRET_KEY` | `dev-secret-change-me` | **Change this in production** — it signs session cookies |
+| `RA_SECRET_KEY` | random, saved to `data/secret_key` | Signs session cookies. **Set this yourself in production**, and always when you run more than one process |
 | `RA_BASE_URL` | `http://localhost:8000` | Used for the links inside emails |
 | `RA_TIMEZONE` | `Asia/Kolkata` | All times are stored in UTC and displayed here |
 | `RA_CURRENCY` / `RA_CURRENCY_SYMBOL` | `INR` / `₹` | Display only |
@@ -206,13 +222,15 @@ Two design notes worth knowing:
 ```bash
 python tests/test_end_to_end.py      # the happy path, end to end
 python tests/test_hostile.py         # every way a person can get it wrong
+python tests/test_regressions.py     # one check per bug ever found and fixed
 python tests/test_browser.py         # the screens themselves, in a real browser
 ```
 
 It builds a throwaway database and walks a whole auction: masters, inline create, publishing,
 the scheduler opening the auction, every bidding rule (ceiling, minimum and maximum decrement,
 not raising your own bid), visibility rules, withdrawal, messages, auto-extension, closing,
-a split award, over-award refusal, savings maths, all four report downloads, the audit trail,
+awarding one bidder per item, refusing an award to a bidder who never bid, savings maths,
+all four report downloads, the audit trail,
 the email outbox, and the three ways of choosing recipients — around seventy assertions.
 
 ---

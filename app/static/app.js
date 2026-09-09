@@ -68,7 +68,12 @@
     board.innerHTML = html;
 
     $$("input, textarea", board).forEach(function (el) {
-      if (el.id && typed[el.id] !== undefined) el.value = typed[el.id];
+      if (el.id && typed[el.id] !== undefined) {
+        el.value = typed[el.id];
+        // Tell the page the value is back, so the "that is X for all Y" hint
+        // under the price is redrawn instead of vanishing on every refresh.
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     });
     if (focusedName) {
       var again = document.getElementById(focusedName);
@@ -136,7 +141,12 @@
       log.scrollTop = log.scrollHeight;
       fetch("/assistant/ask", {
         method: "POST",
-        body: new URLSearchParams({ question: q, context: askForm.dataset.context || "" }),
+        headers: { "X-CSRF-Token": askForm.dataset.csrf || "" },
+        body: new URLSearchParams({
+          question: q,
+          context: askForm.dataset.context || "",
+          csrf_token: askForm.dataset.csrf || "",
+        }),
       })
         .then(function (r) { return r.text(); })
         .then(function (html) {

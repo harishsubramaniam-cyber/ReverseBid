@@ -23,15 +23,11 @@ def utcnow() -> datetime:
 class Role(str, enum.Enum):
     ADMIN = "admin"
     BUYER = "buyer"        # creates and runs auctions
-    APPROVER = "approver"  # approves / rejects / sends back for rework
     VENDOR = "vendor"      # bids
 
 
 class AuctionStatus(str, enum.Enum):
     DRAFT = "draft"
-    PENDING_APPROVAL = "pending_approval"
-    REWORK = "rework"
-    REJECTED = "rejected"
     SCHEDULED = "scheduled"
     LIVE = "live"
     CLOSED = "closed"
@@ -45,13 +41,6 @@ ACTIVE_STATUSES = (AuctionStatus.SCHEDULED, AuctionStatus.LIVE)
 class DecrementType(str, enum.Enum):
     ABSOLUTE = "absolute"
     PERCENT = "percent"
-
-
-class ApprovalStatus(str, enum.Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    REWORK = "rework"
 
 
 # --------------------------------------------------------------------------- masters
@@ -76,7 +65,7 @@ class User(Base):
 
     @property
     def is_buyer_side(self) -> bool:
-        return self.role in (Role.BUYER, Role.ADMIN, Role.APPROVER)
+        return self.role in (Role.BUYER, Role.ADMIN)
 
 
 class Vendor(Base):
@@ -156,7 +145,6 @@ class Auction(Base):
     max_extensions = Column(Integer, default=5)
     extensions_used = Column(Integer, default=0)
 
-    requires_approval = Column(Boolean, default=False)
     #: The buyer's own people who get a copy of the buyer-side events
     #: (published, closed, awarded, cancelled). No login needed.
     cc_emails = Column(Text, default="")
@@ -190,8 +178,12 @@ class Auction(Base):
 
     @property
     def editable(self) -> bool:
-        return self.status in (AuctionStatus.DRAFT, AuctionStatus.REWORK,
-                               AuctionStatus.REJECTED, AuctionStatus.SCHEDULED)
+        return self.status in (AuctionStatus.DRAFT, AuctionStatus.SCHEDULED)
+
+    @property
+    def published(self) -> bool:
+        """Have the bidders been told about this auction at all?"""
+        return self.published_at is not None or self.status not in (AuctionStatus.DRAFT,)
 
 
 class AuctionLine(Base):
@@ -258,8 +250,15 @@ class Bid(Base):
 
 
 class Award(Base):
-    """One award row per line per vendor - a line can be split across vendors."""
+    """One award row per line.
+
+    House rule: a line is won outright by a single bidder, for the whole
+    quantity. Different lines may go to different bidders, but a line is never
+    carved up between two suppliers, so there is exactly one row per awarded
+    line.
+    """
     __tablename__ = "awards"
+    __table_args__ = (UniqueConstraint("line_id", name="uq_award_line"),)
     id = Column(Integer, primary_key=True)
     auction_id = Column(Integer, ForeignKey("auctions.id"), nullable=False, index=True)
     line_id = Column(Integer, ForeignKey("auction_lines.id"), nullable=False)
@@ -275,22 +274,6 @@ class Award(Base):
     line = relationship("AuctionLine")
     vendor = relationship("Vendor")
     auction = relationship("Auction")
-
-
-class Approval(Base):
-    __tablename__ = "approvals"
-    id = Column(Integer, primary_key=True)
-    auction_id = Column(Integer, ForeignKey("auctions.id"), nullable=False)
-    requested_by_id = Column(Integer, ForeignKey("users.id"))
-    approver_id = Column(Integer, ForeignKey("users.id"))
-    status = Column(Enum(ApprovalStatus), default=ApprovalStatus.PENDING, index=True)
-    comments = Column(Text, default="")
-    requested_at = Column(DateTime, default=utcnow)
-    acted_at = Column(DateTime)
-
-    auction = relationship("Auction")
-    approver = relationship("User", foreign_keys=[approver_id])
-    requested_by = relationship("User", foreign_keys=[requested_by_id])
 
 
 class Message(Base):

@@ -17,9 +17,12 @@ from ..web import client_ip, redirect, render
 router = APIRouter(prefix="/masters")
 
 
-@router.get("")
-def masters_home(request: Request, tab: str = "vendors", q: str = "",
-                 user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+def _masters_screen(request: Request, db: Session, user: User, tab: str = "vendors",
+                    q: str = "", *, error: str = "", prefill: dict | None = None,
+                    status_code: int = 200):
+    """The masters page. ``prefill`` puts back what was typed after a refusal -
+    a mistyped email used to wipe all eight boxes and send the buyer back to a
+    blank form."""
     vendors = db.query(Vendor).order_by(Vendor.name).all()
     items = db.query(Item).order_by(Item.name).all()
     units = db.query(Unit).order_by(Unit.code).all()
@@ -29,8 +32,15 @@ def masters_home(request: Request, tab: str = "vendors", q: str = "",
         items = [i for i in items if needle in i.name.lower()]
         units = [u for u in units if needle in u.code.lower()]
     return render(request, "masters.html",
-                  {"vendors": vendors, "items": items, "units": units, "tab": tab, "q": q},
-                  user=user, db=db, help_key="masters")
+                  {"vendors": vendors, "items": items, "units": units, "tab": tab, "q": q,
+                   "error": error, "pf": prefill or {}},
+                  user=user, db=db, help_key="masters", status_code=status_code)
+
+
+@router.get("")
+def masters_home(request: Request, tab: str = "vendors", q: str = "",
+                 user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+    return _masters_screen(request, db, user, tab, q)
 
 
 # ------------------------------------------------------------------ create
@@ -84,6 +94,11 @@ def create_item(db: Session, user: User, name: str, **extra) -> Item:
     if not name:
         raise MasterProblem("An item needs a name.")
     unit_id = extra.pop("default_unit_id", None)
+    if unit_id and not str(unit_id).strip().isdigit():
+        raise MasterProblem("That unit was not one of the choices. Reload the page and pick "
+                            "it again.")
+    if unit_id and not db.get(Unit, int(unit_id)):
+        raise MasterProblem("That unit no longer exists. Pick another one.")
     item = Item(name=name, created_by_id=user.id,
                 default_unit_id=int(unit_id) if unit_id else None,
                 **{k: (v or "") for k, v in extra.items()})
@@ -127,7 +142,12 @@ def post_vendor(request: Request, name: str = Form(""), email: str = Form(""),
         return redirect("/masters?tab=vendors",
                         f"Vendor “{vendor.name}” {note} Emails go to {count} address(es).")
     except MasterProblem as exc:
-        return redirect("/masters?tab=vendors", str(exc), kind="error")
+        db.rollback()
+        return _masters_screen(request, db, user, "vendors", error=str(exc),
+                               prefill={"vendor": {
+                                   "name": name, "email": email, "extra_emails": extra_emails,
+                                   "code": code, "contact_person": contact_person,
+                                   "phone": phone, "gstin": gstin, "address": address}})
 
 
 
@@ -164,11 +184,19 @@ def post_item(request: Request, name: str = Form(""), code: str = Form(""),
               default_unit_id: str = Form(""), user: User = Depends(buyer_only),
               db: Session = Depends(get_db)):
     try:
+        if default_unit_id and not default_unit_id.strip().isdigit():
+            raise MasterProblem("That unit was not one of the choices. Reload the page and "
+                                "pick it again.")
         item = create_item(db, user, name, code=code, category=category, description=description,
                            default_unit_id=default_unit_id or None)
         return redirect("/masters?tab=items", f"Item “{item.name}” saved.")
     except MasterProblem as exc:
-        return redirect("/masters?tab=items", str(exc), kind="error")
+        db.rollback()
+        return _masters_screen(request, db, user, "items", error=str(exc),
+                               prefill={"item": {
+                                   "name": name, "code": code, "category": category,
+                                   "description": description,
+                                   "default_unit_id": default_unit_id}})
 
 
 
@@ -179,7 +207,9 @@ def post_unit(request: Request, code: str = Form(""), name: str = Form(""),
         unit = create_unit(db, user, code, name)
         return redirect("/masters?tab=units", f"Unit “{unit.code}” saved.")
     except MasterProblem as exc:
-        return redirect("/masters?tab=units", str(exc), kind="error")
+        db.rollback()
+        return _masters_screen(request, db, user, "units", error=str(exc),
+                               prefill={"unit": {"code": code, "name": name}})
 
 
 

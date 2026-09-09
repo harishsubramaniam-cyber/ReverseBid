@@ -13,6 +13,7 @@ from . import config
 from .emails_util import describe as email_describe, parse as email_list
 from .help_content import FIELD_HELP, PAGE_HELP
 from .models import Notification, User
+from .security import csrf_token_for, set_csrf_cookie
 from .utils import (TZ_NAME, epoch, fmt_dt, fmt_money, fmt_qty, humanize_seconds, pct,
                     to_local, to_local_string)
 
@@ -53,14 +54,18 @@ def read_flash(request: Request):
 def render(request: Request, template: str, context: dict[str, Any] | None = None,
            *, user: User | None = None, db: Session | None = None,
            help_key: str = "", status_code: int = 200):
+    token = csrf_token_for(request)
     ctx: dict[str, Any] = {"request": request, "user": user, "flash": read_flash(request),
-                           "help_key": help_key, "page_help": PAGE_HELP.get(help_key)}
+                           "help_key": help_key, "page_help": PAGE_HELP.get(help_key),
+                           "csrf_token": token}
     if user and db is not None:
         ctx["unread_count"] = (db.query(Notification)
                                  .filter(Notification.user_id == user.id,
                                          Notification.read_at.is_(None)).count())
     ctx.update(context or {})
     response = templates.TemplateResponse(request, template, ctx, status_code=status_code)
+    # Every page carries the token that its forms will post back.
+    set_csrf_cookie(response, token)
     if request.cookies.get(FLASH_COOKIE):
         response.delete_cookie(FLASH_COOKIE, path="/")
     return response

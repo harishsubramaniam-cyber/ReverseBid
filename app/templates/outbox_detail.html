@@ -7,6 +7,12 @@
   <a class="btn ghost" href="/outbox">Back to outbox</a></div>
 
 {% if m.error %}<div class="alert error">{{ m.error }}</div>{% endif %}
+{% if m.status == 'queued' %}<div class="alert info"><svg><use href="#i-clock"/></svg>
+  <div>Waiting to go out. It will be sent within a few seconds — and if the app was restarted
+  before it left, restarting picks it up again.</div></div>{% endif %}
+{% if m.status == 'failed' %}<div class="alert warn"><svg><use href="#i-alert"/></svg>
+  <div>This one did not get through. Fix the mail server details and restart the app — every
+  failed message is tried again on startup.</div></div>{% endif %}
 {% if m.file_path %}<div class="alert info small">Saved to <code>{{ m.file_path }}</code></div>{% endif %}
 
 <div class="card" style="padding:0;overflow:hidden">

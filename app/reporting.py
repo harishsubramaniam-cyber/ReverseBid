@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import config, engine
@@ -22,17 +23,58 @@ LIGHT = colors.HexColor("#f1f5f9")
 GREY = colors.HexColor("#64748b")
 
 
+def _pdf_symbol_works() -> bool:
+    """Can the PDF font draw the currency symbol at all?
+
+    reportlab's built-in fonts are Latin-1 only, so ₹ came out as a black box
+    in every PDF - the headline "Total savings" figure read "■ 1,251,600.00".
+    Where the symbol cannot be drawn we print the currency code instead.
+    """
+    try:
+        config.CURRENCY_SYMBOL.encode("latin-1")
+        return True
+    except (UnicodeEncodeError, AttributeError):
+        return False
+
+
+PDF_SYMBOL_OK = _pdf_symbol_works()
+
+
+def pdf_money(value: float | None) -> str:
+    """Money for a PDF: the symbol where the font has it, the code where it does not."""
+    if value is None:
+        return "—"
+    if PDF_SYMBOL_OK:
+        return fmt_money(value)
+    return f"{config.CURRENCY} {value:,.2f}"
+
+
+#: The date a savings report should file an auction under: when the buyer
+#: decided, not when bidding happened to open.
+DECISION_DATE = func.coalesce(Auction.awarded_at, Auction.closed_at, Auction.start_at)
+
+
 # ------------------------------------------------------------------ data
 def total_savings(db: Session, start: datetime, end: datetime,
                   statuses=(AuctionStatus.AWARDED,)) -> dict:
+    """Report 1, for auctions decided inside the period.
+
+    The filter has to match the date shown in the row. Filtering on
+    ``start_at`` while displaying the award date put an auction that opened on
+    31 January and was awarded on 5 February in the January report, dated
+    February - so January over-claimed and February showed nothing.
+    """
     query = (db.query(Auction)
                .filter(Auction.status.in_(list(statuses)))
-               .filter(Auction.start_at >= start, Auction.start_at <= end)
-               .order_by(Auction.start_at.asc()))
+               .filter(DECISION_DATE >= start, DECISION_DATE <= end)
+               .order_by(DECISION_DATE.asc()))
     rows = []
+    awarded_only = True
     for auction in query.all():
         summary = engine.auction_summary(db, auction)
         awardees = sorted({a.vendor.name for a in summary["awards"]})
+        if auction.status != AuctionStatus.AWARDED:
+            awarded_only = False
         rows.append({
             "auction": auction, "reference": auction.reference, "title": auction.title,
             "date": auction.awarded_at or auction.closed_at or auction.start_at,
@@ -48,7 +90,8 @@ def total_savings(db: Session, start: datetime, end: datetime,
         "count": len(rows),
     }
     totals["savings_pct"] = (totals["savings"] / totals["baseline"] * 100) if totals["baseline"] else 0.0
-    return {"rows": rows, "totals": totals, "start": start, "end": end}
+    return {"rows": rows, "totals": totals, "start": start, "end": end,
+            "awarded_only": awarded_only}
 
 
 def auction_summary_report(db: Session, auction: Auction) -> dict:
@@ -56,7 +99,9 @@ def auction_summary_report(db: Session, auction: Auction) -> dict:
     lines = []
     for line in auction.lines:
         result = engine.line_result(db, line)
-        history = engine.line_bids(db, line.id)
+        # Every bid, withdrawn ones included: this report is what a buyer
+        # reviews a disputed auction with, and it carries a "withdrawn" column.
+        history = engine.all_line_bids(db, line.id)
         awards = db.query(Award).filter(Award.line_id == line.id).all()
         lines.append({
             "line": line, "label": engine.line_label(line), "result": result,
@@ -75,7 +120,8 @@ def savings_csv(data: dict) -> bytes:
     writer.writerow([f"{config.APP_NAME} — Total Savings Report"])
     writer.writerow([f"Period: {fmt_dt(data['start'], False)} to {fmt_dt(data['end'], False)}"])
     writer.writerow([])
-    writer.writerow(["Reference", "Auction", "Awarded on", "Bidders", "Bids",
+    decided = "Awarded on" if data.get("awarded_only", True) else "Awarded or closed on"
+    writer.writerow(["Reference", "Auction", decided, "Bidders", "Bids",
                      f"Baseline ({config.CURRENCY})", f"Final ({config.CURRENCY})",
                      f"Savings ({config.CURRENCY})", "Savings %", "Awarded to"])
     for row in data["rows"]:
@@ -106,7 +152,8 @@ def auction_csv(db: Session, data: dict) -> bytes:
     writer.writerow(["Savings", f"{summary['savings']:.2f}", f"{summary['savings_pct']:.2f}%"])
     writer.writerow([])
     writer.writerow(["Item", "Qty", "Unit", "Starting price", "Highest bid", "Lowest bid",
-                     "Savings", "Awarded to", "Awarded qty", "Awarded price"])
+                     "Savings", "Savings based on", "Awarded to", "Awarded qty",
+                     "Awarded price"])
     for entry in data["lines"]:
         line = entry["line"]
         awards = entry["awards"]
@@ -115,7 +162,7 @@ def auction_csv(db: Session, data: dict) -> bytes:
             f"{line.starting_price:.2f}" if line.has_ceiling else "no ceiling",
             f"{entry['highest'].unit_price:.2f}" if entry["highest"] else "",
             f"{entry['lowest'].unit_price:.2f}" if entry["lowest"] else "",
-            f"{entry['result']['savings']:.2f}",
+            f"{entry['result']['savings']:.2f}", entry["result"]["basis"],
             "; ".join(a.vendor.name for a in awards),
             "; ".join(fmt_qty(a.qty) for a in awards),
             "; ".join(f"{a.unit_price:.2f}" for a in awards),
@@ -123,11 +170,15 @@ def auction_csv(db: Session, data: dict) -> bytes:
     writer.writerow([])
     writer.writerow(["Every bid placed"])
     writer.writerow(["Time", "Item", "Bidder", "Unit price", "Line total", "Withdrawn"])
+    any_bids = False
     for entry in data["lines"]:
         for bid in sorted(entry["history"], key=lambda b: b.created_at):
+            any_bids = True
             writer.writerow([fmt_dt(bid.created_at, False), entry["label"], bid.vendor.name,
                              f"{bid.unit_price:.2f}", f"{bid.total:.2f}",
                              "yes" if bid.withdrawn else "no"])
+    if not any_bids:
+        writer.writerow(["", "No bids were placed", "", "", "", ""])
     return buffer.getvalue().encode("utf-8-sig")
 
 
@@ -142,6 +193,8 @@ def _styles():
         "h2": ParagraphStyle("h", parent=base["Heading2"], fontSize=12, spaceBefore=12,
                              spaceAfter=6, textColor=ACCENT),
         "cell": ParagraphStyle("c", parent=base["Normal"], fontSize=8, leading=10),
+        "right": ParagraphStyle("r", parent=base["Normal"], fontSize=8, leading=10,
+                                alignment=2),
         "note": ParagraphStyle("n", parent=base["Normal"], fontSize=8, textColor=GREY),
     }
 
@@ -184,11 +237,13 @@ def savings_pdf(data: dict) -> bytes:
                   f"{fmt_dt(data['start'], False)} to {fmt_dt(data['end'], False)} "
                   f"&nbsp;·&nbsp; generated {fmt_dt(datetime.utcnow())}", st["sub"]),
     ]
+    awarded_only = data.get("awarded_only", True)
     headline = [[
-        Paragraph("<b>Auctions awarded</b><br/>" + str(totals["count"]), st["cell"]),
-        Paragraph("<b>Baseline value</b><br/>" + fmt_money(totals["baseline"]), st["cell"]),
-        Paragraph("<b>Final value</b><br/>" + fmt_money(totals["final"]), st["cell"]),
-        Paragraph("<b>Total savings</b><br/>" + fmt_money(totals["savings"]), st["cell"]),
+        Paragraph("<b>" + ("Auctions awarded" if awarded_only else "Auctions in this period")
+                  + "</b><br/>" + str(totals["count"]), st["cell"]),
+        Paragraph("<b>Baseline value</b><br/>" + pdf_money(totals["baseline"]), st["cell"]),
+        Paragraph("<b>Final value</b><br/>" + pdf_money(totals["final"]), st["cell"]),
+        Paragraph("<b>Total savings</b><br/>" + pdf_money(totals["savings"]), st["cell"]),
         Paragraph("<b>Savings %</b><br/>" + f"{totals['savings_pct']:.1f}%", st["cell"]),
     ]]
     box = Table(headline, colWidths=[52 * mm] * 5)
@@ -199,25 +254,35 @@ def savings_pdf(data: dict) -> bytes:
                              ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     story += [box, Spacer(1, 10)]
 
-    rows = [["Reference", "Auction", "Awarded on", "Bidders", "Bids", "Baseline",
-             "Final", "Savings", "%", "Awarded to"]]
+    # Every money and date cell is a Paragraph so it wraps inside its column
+    # instead of running across the grid line into the next one.
+    rows = [["Reference", "Auction", "Awarded on" if awarded_only else "Decided on",
+             "Bidders", "Bids", "Baseline", "Final", "Savings", "%", "Awarded to"]]
     for row in data["rows"]:
-        rows.append([row["reference"], Paragraph(row["title"], _styles()["cell"]),
-                     fmt_dt(row["date"], False), str(row["bidders"]), str(row["bids"]),
-                     fmt_money(row["baseline"], False), fmt_money(row["final"], False),
-                     fmt_money(row["savings"], False), f"{row['savings_pct']:.1f}",
-                     Paragraph(row["awardees"], _styles()["cell"])])
-    rows.append(["", "TOTAL", "", "", "", fmt_money(totals["baseline"], False),
-                 fmt_money(totals["final"], False), fmt_money(totals["savings"], False),
+        rows.append([Paragraph(row["reference"], st["cell"]),
+                     Paragraph(row["title"], st["cell"]),
+                     Paragraph(fmt_dt(row["date"], False), st["cell"]),
+                     str(row["bidders"]), str(row["bids"]),
+                     Paragraph(fmt_money(row["baseline"], False), st["right"]),
+                     Paragraph(fmt_money(row["final"], False), st["right"]),
+                     Paragraph(fmt_money(row["savings"], False), st["right"]),
+                     f"{row['savings_pct']:.1f}",
+                     Paragraph(row["awardees"], st["cell"])])
+    rows.append(["", Paragraph("<b>TOTAL</b>", st["cell"]), "", "", "",
+                 Paragraph(f"<b>{fmt_money(totals['baseline'], False)}</b>", st["right"]),
+                 Paragraph(f"<b>{fmt_money(totals['final'], False)}</b>", st["right"]),
+                 Paragraph(f"<b>{fmt_money(totals['savings'], False)}</b>", st["right"]),
                  f"{totals['savings_pct']:.1f}", ""])
-    widths = [24 * mm, 55 * mm, 27 * mm, 15 * mm, 12 * mm, 24 * mm, 24 * mm, 24 * mm,
-              12 * mm, 45 * mm]
-    table = _table(rows, widths, align_right=(3, 4, 5, 6, 7, 8))
-    table.setStyle(TableStyle([("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                               ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#dbeafe"))]))
+    widths = [22 * mm, 48 * mm, 32 * mm, 14 * mm, 11 * mm, 27 * mm, 27 * mm, 27 * mm,
+              11 * mm, 40 * mm]
+    table = _table(rows, widths, align_right=(3, 4, 8))
+    table.setStyle(TableStyle([("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#dbeafe"))]))
+    footnote = ("Savings = baseline − final value. Baseline is quantity × starting price; "
+                "where an item had no starting price the highest bid received stands in. "
+                "Final value uses the awarded prices once an auction is awarded, and the "
+                "best bids before that. ")
     story += [table, Spacer(1, 8),
-              Paragraph("Savings = (quantity × starting price) − final awarded value. "
-                        f"All amounts in {config.CURRENCY}.", st["note"])]
+              Paragraph(footnote + f"All amounts in {config.CURRENCY}.", st["note"])]
     doc.build(story)
     return buffer.getvalue()
 
@@ -238,9 +303,10 @@ def auction_pdf(data: dict) -> bytes:
         Paragraph("<b>Bidders</b><br/>" + f"{summary['active_bidders']} of "
                   f"{summary['participants']} invited", st["cell"]),
         Paragraph("<b>Bids</b><br/>" + str(summary["total_bids"]), st["cell"]),
-        Paragraph("<b>Baseline</b><br/>" + fmt_money(summary["baseline"]), st["cell"]),
-        Paragraph("<b>Final</b><br/>" + fmt_money(summary["final_value"]), st["cell"]),
-        Paragraph("<b>Savings</b><br/>" + f"{fmt_money(summary['savings'])} "
+        Paragraph("<b>Baseline</b><br/>" + pdf_money(summary["baseline"]), st["cell"]),
+        Paragraph(f"<b>Final ({summary['basis']})</b><br/>"
+                  + pdf_money(summary["final_value"]), st["cell"]),
+        Paragraph("<b>Savings</b><br/>" + f"{pdf_money(summary['savings'])} "
                   f"({summary['savings_pct']:.1f}%)", st["cell"]),
     ]]
     box = Table(facts, colWidths=[43 * mm] * 6)
@@ -255,32 +321,43 @@ def auction_pdf(data: dict) -> bytes:
              "Awarded to", "Qty", "Price"]]
     for entry in data["lines"]:
         line, awards = entry["line"], entry["awards"]
+        # Every multi-value cell is a Paragraph: a plain string in a reportlab
+        # table shows "<br/>" as text rather than breaking the line.
         rows.append([
-            Paragraph(entry["label"], st["cell"]), fmt_qty(line.qty),
-            fmt_money(line.starting_price, False) if line.has_ceiling else "—",
-            fmt_money(entry["highest"].unit_price, False) if entry["highest"] else "—",
-            fmt_money(entry["lowest"].unit_price, False) if entry["lowest"] else "—",
-            fmt_money(entry["result"]["savings"], False),
+            Paragraph(entry["label"], st["cell"]),
+            Paragraph(fmt_qty(line.qty), st["right"]),
+            Paragraph(fmt_money(line.starting_price, False) if line.has_ceiling else "—",
+                      st["right"]),
+            Paragraph(fmt_money(entry["highest"].unit_price, False) if entry["highest"]
+                      else "—", st["right"]),
+            Paragraph(fmt_money(entry["lowest"].unit_price, False) if entry["lowest"]
+                      else "—", st["right"]),
+            Paragraph(fmt_money(entry["result"]["savings"], False), st["right"]),
             Paragraph("<br/>".join(a.vendor.name for a in awards) or "—", st["cell"]),
-            "<br/>".join(fmt_qty(a.qty) for a in awards) or "—",
-            "<br/>".join(fmt_money(a.unit_price, False) for a in awards) or "—",
+            Paragraph("<br/>".join(fmt_qty(a.qty) for a in awards) or "—", st["right"]),
+            Paragraph("<br/>".join(fmt_money(a.unit_price, False) for a in awards) or "—",
+                      st["right"]),
         ])
-    story += [_table(rows, [52 * mm, 16 * mm, 24 * mm, 24 * mm, 24 * mm, 24 * mm,
-                            45 * mm, 16 * mm, 24 * mm], align_right=(1, 2, 3, 4, 5)),
+    story += [_table(rows, [50 * mm, 16 * mm, 24 * mm, 24 * mm, 24 * mm, 25 * mm,
+                            44 * mm, 16 * mm, 24 * mm]),
               Paragraph("Every bid placed", st["h2"])]
 
     bid_rows = [["Time", "Item", "Bidder", "Unit price", "Line total", "Status"]]
     all_bids = [(b, entry["label"]) for entry in data["lines"] for b in entry["history"]]
     for bid, label in sorted(all_bids, key=lambda pair: pair[0].created_at):
-        bid_rows.append([fmt_dt(bid.created_at, False), Paragraph(label, st["cell"]),
+        bid_rows.append([Paragraph(fmt_dt(bid.created_at, False), st["cell"]),
+                         Paragraph(label, st["cell"]),
                          Paragraph(bid.vendor.name, st["cell"]),
-                         fmt_money(bid.unit_price, False), fmt_money(bid.total, False),
+                         Paragraph(fmt_money(bid.unit_price, False), st["right"]),
+                         Paragraph(fmt_money(bid.total, False), st["right"]),
                          "Withdrawn" if bid.withdrawn else "Live"])
     if len(bid_rows) == 1:
         bid_rows.append(["—", "No bids were placed", "", "", "", ""])
-    story += [_table(bid_rows, [34 * mm, 60 * mm, 55 * mm, 28 * mm, 30 * mm, 22 * mm],
-                     align_right=(3, 4)), Spacer(1, 8),
-              Paragraph(f"Reverse auction: the lowest bid wins. All amounts in "
+    story += [_table(bid_rows, [34 * mm, 58 * mm, 52 * mm, 30 * mm, 32 * mm, 23 * mm]),
+              Spacer(1, 8),
+              Paragraph("Reverse auction: the lowest bid wins. Withdrawn bids are listed "
+                        "here for the record but take no part in the ranking. Line savings "
+                        "use the awarded price once an item is awarded. All amounts in "
                         f"{config.CURRENCY}.", st["note"])]
     doc.build(story)
     return buffer.getvalue()

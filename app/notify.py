@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .emails_util import parse as parse_emails
 from .mailer import queue_email
-from .models import Auction, Notification, Participant, Role, User, Vendor
+from .models import Auction, Notification, Participant, User, Vendor
 from .utils import fmt_dt, fmt_money
 
 _env = Environment(
@@ -26,7 +26,8 @@ ACCENTS = {
     "invited": "#1d4ed8", "started": "#0f766e", "outbid": "#b45309",
     "extended": "#7c3aed", "ending_soon": "#b45309", "closed": "#0f172a",
     "awarded": "#15803d", "not_awarded": "#64748b", "cancelled": "#be123c",
-    "message": "#0369a1", "approval": "#7c3aed", "bid_received": "#0f766e",
+    "message": "#0369a1", "bid_received": "#0f766e", "published": "#1d4ed8",
+    "starting_soon": "#1d4ed8", "withdrawn": "#b45309", "updated": "#7c3aed",
 }
 
 
@@ -112,11 +113,6 @@ def cc_recipients(db: Session, auction: Auction) -> list[Recipient]:
             for a in parse_emails(auction.cc_emails)]
 
 
-def approvers(db: Session) -> list[User]:
-    return db.query(User).filter(User.role.in_([Role.APPROVER, Role.ADMIN]),
-                                 User.is_active.is_(True)).all()
-
-
 # ------------------------------------------------------------------ core send
 def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: str,
          paragraphs: Sequence[str], facts: Sequence[tuple[str, str]] = (),
@@ -163,30 +159,62 @@ def _strip(html: str) -> str:
 
 
 def _auction_facts(auction: Auction) -> list[tuple[str, str]]:
-    return [
+    """The summary box at the top of an auction email.
+
+    The money line used to be labelled "Starting price (ceiling)" while
+    actually holding quantity x ceiling added up across every item — so a
+    single-line auction for 10 units at ₹100 told bidders the ceiling was
+    ₹1,000, and the engine then refused anything above ₹100.
+    """
+    priced = [line for line in auction.lines if line.has_ceiling]
+    facts = [
         ("Auction", f"{auction.reference} — {auction.title}"),
         ("Items", str(len(auction.lines))),
         ("Starts", fmt_dt(auction.start_at)),
         ("Ends", fmt_dt(auction.end_at)),
-        ("Starting price (ceiling)", fmt_money(auction.baseline_value)),
     ]
+    if not priced:
+        facts.append(("Starting price (ceiling)",
+                      "not set — open at any price you like"))
+    elif len(auction.lines) == 1:
+        facts.append(("Starting price (ceiling)",
+                      f"{fmt_money(priced[0].starting_price)} per "
+                      f"{priced[0].unit.code if priced[0].unit else 'unit'}"))
+    else:
+        note = "" if len(priced) == len(auction.lines) else \
+            f" ({len(auction.lines) - len(priced)} item(s) have no ceiling)"
+        facts.append(("Value at the starting prices",
+                      f"{fmt_money(auction.baseline_value)}{note}"))
+    return facts
 
 
 # ------------------------------------------------------------------ events
 def buyer_update(db: Session, auction: Auction, *, title: str, paragraphs: Sequence[str],
                  facts: Sequence[tuple[str, str]] = (), event: str = "closed",
                  cta_text: str = "Open the auction") -> int:
-    """A copy of a buyer-side milestone for the creator and the copy list."""
-    people = [auction.creator] + cc_recipients(db, auction)
-    return send(db, people, event=event, auction=auction, title=title,
+    """A copy of a buyer-side milestone for the creator and the copy list.
+
+    The creator is written to separately: the copy-list footnote is true for
+    their colleagues and puzzling for the person who created the auction.
+    """
+    sent = send(db, [auction.creator], event=event, auction=auction, title=title,
                 paragraphs=paragraphs, facts=facts, cta_text=cta_text,
-                link=f"/auctions/{auction.id}",
-                note="You are receiving this because you are on the copy list for this auction.")
+                link=f"/auctions/{auction.id}")
+    copies = cc_recipients(db, auction)
+    if copies:
+        creator_address = (auction.creator.email or "").lower()
+        copies = [person for person in copies if person.email.lower() != creator_address]
+    if copies:
+        sent += send(
+            db, copies, event=event, auction=auction, title=title, paragraphs=paragraphs,
+            facts=facts, cta_text=cta_text, link=f"/auctions/{auction.id}",
+            note="You are receiving this because you are on the copy list for this auction.")
+    return sent
 
 
 def auction_published(db: Session, auction: Auction, invited: int) -> int:
     return buyer_update(
-        db, auction, event="invited",
+        db, auction, event="published",
         title=f"Auction published: {auction.title}",
         paragraphs=[f"The auction is live on the calendar and <b>{invited}</b> bidder contact(s) "
                     "have been invited by email."],
@@ -224,7 +252,7 @@ def auction_invited(db: Session, auction: Auction) -> int:
 
 
 def auction_starting_soon(db: Session, auction: Auction) -> int:
-    return send(db, participant_users(db, auction), event="invited", auction=auction,
+    return send(db, participant_users(db, auction), event="starting_soon", auction=auction,
                 title=f"Starts soon: {auction.title}",
                 paragraphs=["This auction opens shortly. Have your prices ready."],
                 facts=_auction_facts(auction), cta_text="Go to the auction",
@@ -334,27 +362,43 @@ def message_posted(db: Session, auction: Auction, recipients: list[User], sender
                 cta_text="Reply", link=f"/auctions/{auction.id}?tab=conversation#conversation")
 
 
-def approval_requested(db: Session, auction: Auction, requester: User) -> int:
-    return send(db, approvers(db), event="approval", auction=auction,
-                title=f"Approval needed: {auction.title}",
-                paragraphs=[f"<b>{requester.name}</b> has sent this auction for your approval. "
-                            "You can approve it, reject it, or send it back for rework."],
-                facts=_auction_facts(auction),
-                cta_text="Review the auction", link=f"/auctions/{auction.id}")
+def auction_changed(db: Session, auction: Auction, newly_invited: list[Vendor],
+                    changes: list[str]) -> int:
+    """Told to bidders after a published auction is edited.
 
-
-def approval_decided(db: Session, auction: Auction, status: str, comments: str) -> int:
-    wording = {"approved": "approved and is now scheduled",
-               "rejected": "rejected", "rework": "sent back to you for rework"}
-    return send(db, [auction.creator], event="approval", auction=auction,
-                title=f"Auction {status}: {auction.title}",
-                paragraphs=[f"Your auction has been <b>{wording.get(status, status)}</b>.",
-                            f"Approver's comments: <i>{comments or 'none'}</i>"],
-                cta_text="Open the auction", link=f"/auctions/{auction.id}")
+    Editing a scheduled auction used to be silent: vendors added on the edit
+    could bid without ever being invited, and a moved closing time reached
+    nobody.
+    """
+    sent = 0
+    for vendor in newly_invited:
+        sent += send(
+            db, vendor_recipients(db, vendor.id, auction), event="invited", auction=auction,
+            title=f"You are invited to bid: {auction.title}",
+            paragraphs=[
+                "You have been added to a <b>reverse auction</b>. The <b>lowest</b> price "
+                "wins, and you can keep lowering your bid until the clock stops.",
+                "The starting price is the <b>maximum</b> the buyer will consider.",
+            ],
+            facts=_auction_facts(auction), cta_text="View the auction",
+            link=f"/auctions/{auction.id}")
+    if not changes:
+        return sent
+    new_ids = {vendor.id for vendor in newly_invited}
+    already = [person for part in auction.participants if part.vendor_id not in new_ids
+               for person in vendor_recipients(db, part.vendor_id, auction)]
+    if already:
+        sent += send(
+            db, already, event="updated", auction=auction,
+            title=f"Updated: {auction.title}",
+            paragraphs=["The buyer has changed this auction. Here is what is different."],
+            facts=[("Changed", change) for change in changes] + _auction_facts(auction),
+            cta_text="Open the auction", link=f"/auctions/{auction.id}")
+    return sent
 
 
 def bid_withdrawn(db: Session, auction: Auction, vendor: Vendor, line_label: str) -> int:
-    return send(db, [auction.creator], event="closed", auction=auction,
+    return send(db, [auction.creator], event="withdrawn", auction=auction,
                 title=f"Bid withdrawn on {auction.reference}",
                 paragraphs=[f"<b>{vendor.name}</b> has withdrawn their bid on "
                             f"<b>{line_label}</b>. Ranks have been recalculated."],

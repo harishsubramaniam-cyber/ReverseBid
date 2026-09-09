@@ -26,7 +26,8 @@
   <div class="card-head"><h3>Line by line</h3></div>
   <div class="table-wrap"><table>
     <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Starting price</th>
-      <th class="num">Highest bid</th><th class="num">Lowest bid</th><th class="num">Savings</th><th>Awarded to</th></tr></thead>
+      <th class="num">Highest bid</th><th class="num">Lowest bid</th><th class="num">Savings</th>
+      <th>Savings based on</th><th>Awarded to</th></tr></thead>
     <tbody>
     {% for entry in data.lines %}
       <tr><td>{{ entry.label }}</td>
@@ -35,6 +36,7 @@
         <td class="num mono">{{ fmt_money(entry.highest.unit_price) if entry.highest else '—' }}</td>
         <td class="num mono"><b>{{ fmt_money(entry.lowest.unit_price) if entry.lowest else '—' }}</b></td>
         <td class="num mono" style="color:var(--good)">{{ fmt_money(entry.result.savings) }}</td>
+        <td class="small muted">{{ entry.result.basis }}</td>
         <td class="small">{% for award in entry.awards %}{{ award.vendor.name }}
           ({{ fmt_qty(award.qty) }} @ {{ fmt_money(award.unit_price) }}){% if not loop.last %}<br>{% endif %}
           {% else %}<span class="muted">not awarded</span>{% endfor %}</td></tr>
@@ -54,6 +56,11 @@
         <td class="num mono">{{ fmt_money(bid.total) }}</td>
         <td>{% if bid.withdrawn %}<span class="pill bad">withdrawn</span>{% else %}<span class="pill good">live</span>{% endif %}</td></tr>
     {% endfor %}{% endfor %}
+    {% if not s.total_bids %}
+      <tr><td colspan="6" class="empty">No bids were placed in this auction.</td></tr>
+    {% endif %}
   </tbody></table></div>
+  <p class="hint">Withdrawn bids are listed for the record. They take no part in the ranking or
+    the savings.</p>
 </div>
 {% endblock %}

@@ -13,6 +13,10 @@ from ..web import render
 
 router = APIRouter()
 
+#: The statuses a bidder may see. A draft is nobody's business but the buyer's.
+VENDOR_VISIBLE = (AuctionStatus.SCHEDULED, AuctionStatus.LIVE, AuctionStatus.CLOSED,
+                  AuctionStatus.AWARDED, AuctionStatus.CANCELLED)
+
 
 @router.get("/")
 def home(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -72,8 +76,12 @@ def _monthly_savings(db: Session, months: int = 6):
 
 
 def _vendor_home(request: Request, user: User, db: Session):
+    # Only auctions the bidder is actually allowed to open. Without the status
+    # filter a draft the buyer had not published yet showed up here - title,
+    # dates and all - and then refused to open.
     auctions = (db.query(Auction).join(Participant, Participant.auction_id == Auction.id)
-                  .filter(Participant.vendor_id == user.vendor_id)
+                  .filter(Participant.vendor_id == user.vendor_id,
+                          Auction.status.in_(VENDOR_VISIBLE))
                   .order_by(Auction.start_at.desc()).all())
     live, upcoming, finished = [], [], []
     for auction in auctions:

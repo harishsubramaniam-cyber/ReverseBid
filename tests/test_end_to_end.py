@@ -42,8 +42,22 @@ def check(label: str, condition: bool, extra: str = "") -> None:
         FAILS.append(label)
 
 
+class Client(TestClient):
+    """A test client that behaves like a browser on one point: it sends back the
+    CSRF token the app gave it. Every real form carries it in a hidden field."""
+
+    def post(self, url, **kwargs):
+        token = self.cookies.get("ra_csrf")
+        if token:
+            headers = dict(kwargs.get("headers") or {})
+            headers.setdefault("X-CSRF-Token", token)
+            kwargs["headers"] = headers
+        return super().post(url, **kwargs)
+
+
 def client_for(email: str) -> TestClient:
-    c = TestClient(app, base_url="http://test")
+    c = Client(app, base_url="http://test")
+    c.get("/login")                      # picks up the CSRF cookie, as a browser would
     r = c.post("/login", data={"email": email, "password": PASSWORD, "next": "/"},
                follow_redirects=False)
     assert r.status_code == 303, r.text
@@ -201,7 +215,13 @@ def main() -> int:
     check("vendor's extra contact was invited", "sales1@test.local" in invited_to)
     check("per-auction override replaced that vendor's own addresses",
           "tender.desk@v3.local" in invited_to and "v3@test.local" not in invited_to)
-    check("the buyer's copy list was told", "finance@buyer.local" in invited_to)
+    # The buyer's own confirmation is filed as "published", not as an invitation.
+    published_to = sorted(m.to_email for m in emails("published"))
+    check("the buyer's copy list was told", "finance@buyer.local" in published_to,
+          ", ".join(published_to))
+    check("the creator is not told they are on their own copy list",
+          all("copy list" not in m.html_body
+              for m in emails("published") if m.to_email == "buyer@test.local"))
     check("'bidding is open' went out too", len(emails("started")) >= 5,
           f"{len(emails('started'))} sent")
 
@@ -334,8 +354,9 @@ def main() -> int:
 
     r = buyer_c.post(f"/auctions/{auction.id}/award", follow_redirects=False,
                      data={f"winner_{priced.id}": "", f"winner_{open_line.id}": ""})
-    check("awarding nothing at all is refused with a message",
-          r.status_code == 303 and "at least one item" in flash_of(r), flash_of(r)[:50])
+    check("awarding nothing at all is refused on the award screen itself",
+          r.status_code == 200 and "at least one item" in r.text
+          and "text/html" in r.headers["content-type"], f"HTTP {r.status_code}")
     db.expire_all()
     check("the earlier award survived that mistake", db.query(Award).count() == 2)
 

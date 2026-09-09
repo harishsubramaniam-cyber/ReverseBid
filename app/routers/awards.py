@@ -7,6 +7,7 @@ carved up between two suppliers.
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,7 +17,7 @@ from .. import engine, notify
 from ..audit import record
 from ..db import get_db
 from ..errors import ActionError
-from ..models import Auction, AuctionStatus, Award, User, Vendor
+from ..models import Auction, AuctionStatus, Award, Participant, User, Vendor
 from ..security import buyer_only
 from ..utils import fmt_money, fmt_qty
 from ..web import client_ip, redirect, render
@@ -34,6 +35,37 @@ def _awardable(db: Session, auction_id: int) -> Auction:
     return auction
 
 
+def _award_screen(request: Request, db: Session, user: User, auction,
+                  *, error: str = "", form=None):
+    """The award screen. ``form`` is what was just submitted, so a rejected
+    award comes back with every winner, price and note still on the page -
+    losing a whole auction's negotiated prices over one typo was brutal."""
+    rows = []
+    for line in auction.lines:
+        ranked = engine.best_per_vendor(db, line.id)
+        existing = db.query(Award).filter(Award.line_id == line.id).first()
+        chosen = existing.vendor_id if existing else (ranked[0].vendor_id if ranked else None)
+        price = existing.unit_price if existing else (ranked[0].unit_price if ranked else "")
+        note = existing.notes if existing else ""
+        if form is not None:
+            raw_choice = (form.get(f"winner_{line.id}") or "").strip()
+            chosen = int(raw_choice) if raw_choice.isdigit() else None
+            price = (form.get(f"price_{line.id}") or "").strip()
+            note = (form.get(f"note_{line.id}") or "").strip()
+        rows.append({
+            "line": line, "label": engine.line_label(line), "ranked": ranked,
+            "baseline": engine.line_baseline(db, line),
+            "existing": existing, "best": ranked[0] if ranked else None,
+            "chosen": chosen, "price": price, "note": note,
+        })
+    bidders = sorted({(bid.vendor_id, bid.vendor.name)
+                      for row in rows for bid in row["ranked"]}, key=lambda pair: pair[1])
+    return render(request, "award.html",
+                  {"auction": auction, "rows": rows, "bidders": bidders, "error": error,
+                   "summary": engine.auction_summary(db, auction)},
+                  user=user, db=db, help_key="auction_detail_buyer")
+
+
 @router.get("/{auction_id}/award")
 def award_form(auction_id: int, request: Request, user: User = Depends(buyer_only),
                db: Session = Depends(get_db)):
@@ -41,23 +73,7 @@ def award_form(auction_id: int, request: Request, user: User = Depends(buyer_onl
         auction = _awardable(db, auction_id)
     except ActionError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
-
-    rows = []
-    for line in auction.lines:
-        ranked = engine.best_per_vendor(db, line.id)
-        existing = db.query(Award).filter(Award.line_id == line.id).first()
-        rows.append({
-            "line": line, "label": engine.line_label(line), "ranked": ranked,
-            "baseline": engine.line_baseline(db, line),
-            "existing": existing, "best": ranked[0] if ranked else None,
-            "chosen": existing.vendor_id if existing else (ranked[0].vendor_id if ranked else None),
-        })
-    bidders = sorted({(bid.vendor_id, bid.vendor.name)
-                      for row in rows for bid in row["ranked"]}, key=lambda pair: pair[1])
-    return render(request, "award.html",
-                  {"auction": auction, "rows": rows, "bidders": bidders,
-                   "summary": engine.auction_summary(db, auction)},
-                  user=user, db=db, help_key="auction_detail_buyer")
+    return _award_screen(request, db, user, auction)
 
 
 @router.post("/{auction_id}/award")
@@ -79,9 +95,16 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
             if not raw_vendor:
                 continue                      # this line is deliberately left unawarded
             label = engine.line_label(line)
+            if not raw_vendor.isdigit():
+                raise ActionError(f"The bidder chosen for “{label}” was not one of the "
+                                  "choices on the page. Reload it and pick again.")
             vendor = db.get(Vendor, int(raw_vendor))
             if not vendor:
                 raise ActionError(f"The bidder chosen for “{label}” no longer exists.")
+            if not db.query(Participant).filter_by(auction_id=auction.id,
+                                                   vendor_id=vendor.id).first():
+                raise ActionError(f"{vendor.name} was not invited to this auction, so they "
+                                  f"cannot be awarded “{label}”.")
             bid = engine.vendor_best(db, line.id, vendor.id)
 
             raw_price = (form.get(f"price_{line.id}") or "").strip()
@@ -90,6 +113,8 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
                     price = float(raw_price)
                 except ValueError:
                     raise ActionError(f"On “{label}”, “{raw_price}” is not a price.")
+                if not math.isfinite(price):
+                    raise ActionError(f"On “{label}”, “{raw_price}” is not a real price.")
             elif bid:
                 price = bid.unit_price
             else:
@@ -97,9 +122,14 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
                                   "to award at. Type one in, or leave that item unawarded.")
             if price <= 0:
                 raise ActionError(f"On “{label}”, the award price has to be more than zero.")
+            price = round(price, 2)
 
             award = Award(auction_id=auction.id, line_id=line.id, vendor_id=vendor.id,
-                          bid_id=bid.id if bid else None, qty=line.qty, unit_price=price,
+                          # Only point at the bid when the award really is at
+                          # that price; otherwise the link would claim a bidder
+                          # offered a figure they never typed.
+                          bid_id=bid.id if (bid and round(bid.unit_price, 2) == price) else None,
+                          qty=line.qty, unit_price=price,
                           total=round(line.qty * price, 2), awarded_by_id=user.id,
                           notes=(form.get(f"note_{line.id}") or "")[:500])
             db.add(award)
@@ -123,7 +153,9 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
         db.commit()
     except ActionError as exc:
         db.rollback()
-        return redirect(f"/auctions/{auction_id}/award", str(exc), kind="error")
+        db.expire_all()
+        return _award_screen(request, db, user, db.get(Auction, auction_id),
+                             error=str(exc), form=form)
 
     # Winners hear what they won; everyone else hears the outcome too.
     by_vendor: dict[int, list[Award]] = {}

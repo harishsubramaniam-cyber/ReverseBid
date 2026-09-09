@@ -24,7 +24,7 @@
       <td class="small">{{ m.to_name }}<div class="muted">{{ m.to_email }}</div></td>
       <td><a href="/outbox/{{ m.id }}">{{ m.subject }}</a></td>
       <td><span class="pill closed">{{ m.event or '—' }}</span></td>
-      <td><span class="pill {{ 'good' if m.status in ('sent','outbox') else 'bad' }}">{{ m.status }}</span>
+      <td><span class="pill {{ 'good' if m.status in ('sent','outbox') else ('warn' if m.status == 'queued' else 'bad') }}">{{ m.status }}</span>
         {% if m.error %}<div class="muted small">{{ m.error }}</div>{% endif %}</td>
       <td><a class="btn ghost sm" href="/outbox/{{ m.id }}">Open</a></td></tr>
   {% endfor %}

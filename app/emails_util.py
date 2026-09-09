@@ -9,6 +9,10 @@ import re
 
 _SPLIT = re.compile(r"[,;\n\r]+")
 _ANGLE = re.compile(r"^.*<([^>]+)>$")
+#: Pulled out before any splitting, so a display name containing a comma -
+#: "Menon, Ravi <ravi@x.com>", which is exactly what Outlook copies - does not
+#: get torn in half and rejected.
+_ANGLE_ANY = re.compile(r"<([^<>]+)>")
 #: Deliberately permissive: enough to catch typos, not a full RFC 5322 parser.
 _VALID = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 
@@ -22,14 +26,28 @@ def parse(raw: str | None) -> list[str]:
     if not raw:
         return []
     out: list[str] = []
-    for chunk in _SPLIT.split(raw):
-        candidate = chunk.strip()
+    # Anything in angle brackets is an address with a display name in front of
+    # it. Take those out first, so a display name containing a comma cannot be
+    # split down the middle and reported as a bad address.
+    found_angle = False
+
+    def _keep(address: str) -> str:
+        nonlocal found_angle
+        found_angle = True
+        cleaned = address.strip().strip("<>").lower()
+        if cleaned and cleaned not in out:
+            out.append(cleaned)
+        return " "
+
+    remainder = _ANGLE_ANY.sub(lambda m: _keep(m.group(1)), raw)
+    for chunk in _SPLIT.split(remainder):
+        candidate = chunk.strip().strip("<>").lower()
         if not candidate:
             continue
-        match = _ANGLE.match(candidate)
-        if match:
-            candidate = match.group(1).strip()
-        candidate = candidate.strip("<>").lower()
+        # What is left beside a "Name <address>" entry is the leftover display
+        # name, not something the person meant as an address.
+        if found_angle and "@" not in candidate:
+            continue
         if candidate not in out:
             out.append(candidate)
     return out

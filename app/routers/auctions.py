@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -10,7 +11,7 @@ from ..audit import record
 from ..errors import ActionError, FormError
 from ..db import get_db
 from ..emails_util import EmailError, describe, normalise, parse as parse_emails, validate
-from ..models import (Approval, ApprovalStatus, Auction, AuctionLine, AuctionStatus, Award, Bid,
+from ..models import (Auction, AuctionLine, AuctionStatus, Award, Bid,
                       DecrementType, Item, Message, Participant, Unit, User, Vendor)
 from ..security import buyer_only, current_user
 from ..utils import alias_for, fmt_dt, from_local_string
@@ -44,6 +45,17 @@ def visible_auction(db: Session, auction_id: int, user: User) -> Auction:
     return auction
 
 
+def _whole_number(raw: str, label: str, field: str) -> int | None:
+    """An id from a dropdown. Anything else came from a tampered or stale page."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    if not raw.isdigit():
+        raise FormError(f"{label} was not one of the choices on the form. Reload the page "
+                        "and pick it again.", field)
+    return int(raw)
+
+
 def parse_lines(form, db: Session) -> list[dict]:
     """Read the item rows. The starting price is optional; everything else is not."""
     items = form.getlist("line_item_id")
@@ -63,6 +75,10 @@ def parse_lines(form, db: Session) -> list[dict]:
         except ValueError:
             raise FormError(f"Item {position}: the quantity “{raw_qty}” is not a number.",
                             "line_qty")
+        # inf and nan are numbers to float() but not to anybody else: they were
+        # stored and then rendered as "₹ inf" across every screen.
+        if not math.isfinite(qty) or qty > 1e12:
+            raise FormError(f"Item {position}: “{raw_qty}” is not a real quantity.", "line_qty")
         if qty <= 0:
             raise FormError(f"Item {position} needs a quantity greater than zero.", "line_qty")
 
@@ -74,16 +90,27 @@ def parse_lines(form, db: Session) -> list[dict]:
                 raise FormError(f"Item {position}: the starting price “{raw_price}” is not a "
                                 "number. Leave it empty if you do not want a ceiling.",
                                 "line_price")
+            if not math.isfinite(price) or price > 1e12:
+                raise FormError(f"Item {position}: “{raw_price}” is not a real price.",
+                                "line_price")
             if price <= 0:
                 raise FormError(f"Item {position}: a starting price has to be more than zero. "
                                 "Leave it empty if you do not want a ceiling at all.",
                                 "line_price")
-        item = db.get(Item, int(item_id))
+            # Bids are compared to the paisa, so the ceiling is stored that way
+            # too. Otherwise the screen offered a price the engine refused.
+            price = round(price, 2)
+        item_key = _whole_number(item_id, f"The item on row {position}", "line_item_id")
+        item = db.get(Item, item_key) if item_key else None
         if not item:
             raise FormError(f"Item {position} no longer exists. Pick a different one.",
                             "line_item_id")
-        rows.append({"item_id": int(item_id),
-                     "unit_id": int(units[index]) if index < len(units) and units[index] else None,
+        unit_key = _whole_number(units[index] if index < len(units) else "",
+                                 f"The unit on row {position}", "line_unit_id")
+        if unit_key and not db.get(Unit, unit_key):
+            raise FormError(f"Item {position}: that unit no longer exists. Pick another.",
+                            "line_unit_id")
+        rows.append({"item_id": item.id, "unit_id": unit_key,
                      "qty": qty, "starting_price": price,
                      "specification": specs[index] if index < len(specs) else ""})
     if not rows:
@@ -92,11 +119,33 @@ def parse_lines(form, db: Session) -> list[dict]:
     return rows
 
 
-def form_context(db: Session) -> dict:
+def form_context(db: Session, auction: Auction | None = None) -> dict:
+    """The pickers on the auction form.
+
+    Archived vendors and items are hidden - except any this auction already
+    uses. Leaving them out meant the browser could not post them back, so
+    saving an unrelated change quietly uninvited a bidder or deleted a line.
+    """
+    items = db.query(Item).filter(Item.is_active.is_(True)).order_by(Item.name).all()
+    vendors = (db.query(Vendor).filter(Vendor.is_active.is_(True))
+                 .order_by(Vendor.name).all())
+    if auction is not None:
+        have_items = {item.id for item in items}
+        for line in auction.lines:
+            if line.item and line.item_id not in have_items:
+                items.append(line.item)
+                have_items.add(line.item_id)
+        items.sort(key=lambda item: item.name.lower())
+        have_vendors = {vendor.id for vendor in vendors}
+        for part in auction.participants:
+            if part.vendor and part.vendor_id not in have_vendors:
+                vendors.append(part.vendor)
+                have_vendors.add(part.vendor_id)
+        vendors.sort(key=lambda vendor: vendor.name.lower())
     return {
-        "items": db.query(Item).filter(Item.is_active.is_(True)).order_by(Item.name).all(),
+        "items": items,
         "units": db.query(Unit).order_by(Unit.code).all(),
-        "vendors": db.query(Vendor).filter(Vendor.is_active.is_(True)).order_by(Vendor.name).all(),
+        "vendors": vendors,
     }
 
 
@@ -160,16 +209,19 @@ def _prefill(form) -> dict:
         "hide_bidder_names": form.get("hide_bidder_names") == "on",
         "auto_extend": form.get("auto_extend") == "on",
         "lines": lines,
-        "vendor_ids": [int(v) for v in form.getlist("vendor_ids") if v],
+        # Anything that is not a plain id came from a tampered or stale page.
+        # Skip it here: this function only redraws the form, and it must never
+        # be the thing that fails while explaining a failure.
+        "vendor_ids": [int(v) for v in form.getlist("vendor_ids") if str(v).isdigit()],
         "overrides": {int(v): form.get(f"notify_emails_{v}", "")
-                      for v in form.getlist("vendor_ids") if v},
+                      for v in form.getlist("vendor_ids") if str(v).isdigit()},
     }
 
 
 def _form_screen(request: Request, db: Session, user: User, auction: Auction | None,
                  *, error: FormError | None = None, form=None):
     """The create/edit screen, with an error banner and the typed values kept."""
-    context = form_context(db)
+    context = form_context(db, auction)
     start = datetime.utcnow() + timedelta(hours=1)
     context.update({
         "auction": auction,
@@ -226,7 +278,8 @@ async def create_auction(request: Request, user: User = Depends(buyer_only),
                     "Saved as a draft. Check it over, then press Publish to invite your bidders.")
 
 
-def _number(form, name: str, label: str, default: float = 0.0) -> float:
+def _number(form, name: str, label: str, default: float = 0.0,
+            limit: float = 1e9) -> float:
     raw = (form.get(name) or "").strip()
     if not raw:
         return default
@@ -234,8 +287,14 @@ def _number(form, name: str, label: str, default: float = 0.0) -> float:
         value = float(raw)
     except ValueError:
         raise FormError(f"{label} has to be a number — “{raw}” is not.", name)
+    # "1e999" is a valid entry for a number box and floats to infinity, which
+    # then blew up on int() and took the whole half-filled form with it.
+    if not math.isfinite(value):
+        raise FormError(f"{label} has to be a real number — “{raw}” is not.", name)
     if value < 0:
         raise FormError(f"{label} cannot be negative.", name)
+    if value > limit:
+        raise FormError(f"{label} is far too large. Try a smaller number.", name)
     return value
 
 
@@ -243,6 +302,7 @@ def _apply_settings(auction: Auction, form) -> None:
     for name, label in (("start_at", "the opening time"), ("end_at", "the closing time")):
         if not (form.get(name) or "").strip():
             raise FormError(f"Please set {label} for the auction.", name)
+    was_start, was_end = auction.start_at, auction.end_at
     try:
         auction.start_at = from_local_string(form.get("start_at", ""))
         auction.end_at = from_local_string(form.get("end_at", ""))
@@ -250,13 +310,25 @@ def _apply_settings(auction: Auction, form) -> None:
         raise FormError("The dates did not come through properly. Click the calendar icon in "
                         "each date box and pick a date and a time.", "start_at")
     auction.original_end_at = auction.end_at
+    # A rescheduled auction needs its time-based alerts again. These flags were
+    # never reset, so a bidder got "starts soon" for the old time and no
+    # warning at all before the new one.
+    if was_start != auction.start_at:
+        auction.starting_soon_notified = False
+    if was_end != auction.end_at:
+        auction.ending_soon_notified = False
     if auction.end_at <= auction.start_at:
         raise FormError("The auction closes before it opens. Set the closing time later than "
                         "the opening time.", "end_at")
     if (auction.end_at - auction.start_at).total_seconds() < 60:
         raise FormError("Give bidders at least a minute — set the closing time further out.",
                         "end_at")
-    auction.decrement_type = DecrementType(form.get("decrement_type", "absolute"))
+    try:
+        auction.decrement_type = DecrementType(form.get("decrement_type", "absolute")
+                                               or "absolute")
+    except ValueError:
+        raise FormError("Choose whether the minimum drop is a fixed amount or a percentage.",
+                        "decrement_type")
     auction.min_decrement = _number(form, "min_decrement", "The minimum decrement")
     auction.max_decrement = _number(form, "max_decrement", "The maximum decrement")
     if auction.max_decrement and auction.max_decrement < auction.min_decrement:
@@ -270,14 +342,16 @@ def _apply_settings(auction: Auction, form) -> None:
     auction.hide_bidder_names = form.get("hide_bidder_names") == "on"
     auction.auto_extend = form.get("auto_extend") == "on"
     auction.extend_trigger_seconds = int(_number(form, "extend_trigger_minutes",
-                                                 "The extension trigger", 2) * 60)
+                                                 "The extension trigger", 2,
+                                                 limit=7 * 24 * 60) * 60)
     auction.extend_by_seconds = int(_number(form, "extend_by_minutes",
-                                            "The extension length", 3) * 60)
-    auction.max_extensions = int(_number(form, "max_extensions", "The number of extensions", 5))
+                                            "The extension length", 3,
+                                            limit=7 * 24 * 60) * 60)
+    auction.max_extensions = int(_number(form, "max_extensions", "The number of extensions", 5,
+                                         limit=1000))
     if auction.auto_extend and auction.max_extensions and auction.extend_by_seconds <= 0:
         raise FormError("Auto-extension is on, so each extension needs to add some time.",
                         "extend_by_minutes")
-    auction.requires_approval = False
     try:
         auction.cc_emails = "\n".join(validate(form.get("cc_emails", ""),
                                                field="email address"))
@@ -290,22 +364,46 @@ def _participants(db: Session, auction: Auction) -> list[Participant]:
               .order_by(Participant.id).all())
 
 
-def _sync_participants(db: Session, auction: Auction, form) -> None:
-    """Invite the ticked vendors, and record any per-auction address override."""
-    wanted = {int(v) for v in form.getlist("vendor_ids") if v}
+def _sync_participants(db: Session, auction: Auction, form) -> list[Vendor]:
+    """Invite the ticked vendors, and record any per-auction address override.
+
+    Returns the vendors newly added by this submission, so a published auction
+    can send them the invitation they would otherwise never receive.
+    """
+    wanted: set[int] = set()
+    for raw in form.getlist("vendor_ids"):
+        vendor_id = _whole_number(raw, "One of the ticked bidders", "vendor_ids")
+        if vendor_id is None:
+            continue
+        if not db.get(Vendor, vendor_id):
+            raise FormError("One of the ticked bidders no longer exists. Reload the page and "
+                            "choose again.", "vendor_ids")
+        wanted.add(vendor_id)
     if not wanted:
         raise FormError("Tick at least one bidder — only invited vendors can see the auction.",
                         "vendor_ids")
     existing = {p.vendor_id: p for p in _participants(db, auction)}
-    for vendor_id in wanted - set(existing):
+    added = sorted(wanted - set(existing))
+    for vendor_id in added:
         db.add(Participant(auction_id=auction.id, vendor_id=vendor_id))
     for vendor_id in set(existing) - wanted:
         db.delete(existing[vendor_id])
     db.flush()
     # Read back from the database: on a brand-new auction the in-memory
     # ``auction.participants`` collection is still empty at this point.
-    for index, part in enumerate(_participants(db, auction)):
-        part.alias = alias_for(index)
+    parts = _participants(db, auction)
+    # Keep an alias once it has been handed out - bidders have already seen
+    # "Bidder B" on screen and in their emails, so renumbering on an edit would
+    # move that name to a different company mid-auction. New bidders take the
+    # next letter that is free.
+    used = {part.alias for part in parts if part.alias}
+    spare = 0
+    for part in parts:
+        if not part.alias:
+            while alias_for(spare) in used:
+                spare += 1
+            part.alias = alias_for(spare)
+            used.add(part.alias)
         typed = form.get(f"notify_emails_{part.vendor_id}", "")
         try:
             part.notify_emails = "\n".join(validate(typed, field="email address"))
@@ -313,6 +411,7 @@ def _sync_participants(db: Session, auction: Auction, form) -> None:
             vendor = db.get(Vendor, part.vendor_id)
             raise FormError(f"{exc} (in the box under "
                             f"{vendor.name if vendor else 'one of the bidders'})", "vendor_ids")
+    return [v for v in (db.get(Vendor, vendor_id) for vendor_id in added) if v]
 
 
 # ------------------------------------------------------------------ edit
@@ -344,8 +443,10 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
     except ActionError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
     form = await request.form()
+    was_published = auction.published
     before = {"title": auction.title, "start": auction.start_at.isoformat(),
               "end": auction.end_at.isoformat()}
+    was_start, was_end, was_title = auction.start_at, auction.end_at, auction.title
     try:
         title = (form.get("title") or "").strip()
         if not title:
@@ -360,7 +461,7 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
         db.flush()
         for row in rows:
             db.add(AuctionLine(auction_id=auction.id, **row))
-        _sync_participants(db, auction, form)
+        newly_invited = _sync_participants(db, auction, form)
         record(db, action="auction.update", entity_type="auction", entity_id=auction.id,
                actor=user, auction_id=auction.id, ip=client_ip(request),
                detail={"before": before, "after": {"title": auction.title,
@@ -378,7 +479,27 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
     except ActionError as exc:
         return redirect(f"/auctions/{auction.id}",
                         f"Changes saved, but not published: {exc}", kind="error")
-    return redirect(f"/auctions/{auction.id}", "Changes saved.")
+
+    # Editing an auction the bidders already know about used to be silent: a
+    # vendor added on the edit could bid without ever being invited, and a
+    # moved closing time reached nobody.
+    if not was_published:
+        return redirect(f"/auctions/{auction.id}", "Changes saved.")
+    changes: list[str] = []
+    if was_title != auction.title:
+        changes.append(f"Title is now “{auction.title}”")
+    if was_start != auction.start_at:
+        changes.append(f"Bidding now opens {fmt_dt(auction.start_at)}")
+    if was_end != auction.end_at:
+        changes.append(f"Bidding now closes {fmt_dt(auction.end_at)}")
+    notify.auction_changed(db, auction, newly_invited, changes)
+    told = []
+    if newly_invited:
+        told.append(f"{len(newly_invited)} new bidder(s) invited by email")
+    if changes:
+        told.append("the bidders have been emailed the change")
+    suffix = f" — {', '.join(told)}." if told else ""
+    return redirect(f"/auctions/{auction.id}", f"Changes saved{suffix}")
 
 
 # ------------------------------------------------------------------ lifecycle
@@ -474,12 +595,21 @@ def cancel(auction_id: int, request: Request, reason: str = Form(""),
         return redirect(f"/auctions/{auction.id}",
                         "This auction has already finished, so there is nothing to cancel.",
                         kind="error")
+    # A draft nobody was ever told about should not announce itself on the way
+    # out: cancelling one used to email every prospective bidder the title of
+    # an auction they had never been invited to.
+    was_published = auction.published
     auction.status = AuctionStatus.CANCELLED
     auction.cancelled_at = datetime.utcnow()
     auction.cancel_reason = reason
     record(db, action="auction.cancel", entity_type="auction", entity_id=auction.id, actor=user,
-           auction_id=auction.id, ip=client_ip(request), detail={"reason": reason})
+           auction_id=auction.id, ip=client_ip(request),
+           detail={"reason": reason, "was_published": was_published})
     db.commit()
+    if not was_published:
+        return redirect(f"/auctions/{auction.id}",
+                        "Draft cancelled. Nobody was emailed, because this auction had never "
+                        "been published.")
     notify.auction_cancelled(db, auction, reason)
     return redirect(f"/auctions/{auction.id}", "Auction cancelled and everyone notified.")
 
@@ -508,6 +638,12 @@ def detail(auction_id: int, request: Request, tab: str = "bids",
            user: User = Depends(current_user), db: Session = Depends(get_db)):
     auction = visible_auction(db, auction_id, user)
     context = build_detail_context(db, auction, user)
+    # The audit trail is the buyer's record: it names every bidder, their
+    # prices, their email addresses and their IPs. The tab was hidden from
+    # bidders but the page behind it was not, so ?tab=history handed a
+    # competitor the lot.
+    if tab == "history" and not user.is_buyer_side:
+        raise HTTPException(403, "The history and audit trail is only for the buyer.")
     context["tab"] = tab
     if tab == "history":
         context["logs"] = audit.for_auction(db, auction.id)
@@ -526,7 +662,9 @@ def build_detail_context(db: Session, auction: Auction, user: User) -> dict:
             "mine": mine,
             "my_rank": engine.vendor_rank(db, line.id, user.vendor_id) if user.is_vendor else None,
             "best": ranked[0] if ranked else None,
-            "history": engine.line_bids(db, line.id),
+            # Every bid, withdrawn ones included: the panels that use this are
+            # headed "Every bid on this item" and carry a withdrawn badge.
+            "history": engine.all_line_bids(db, line.id),
             "result": engine.line_result(db, line),
         })
     messages_q = db.query(Message).filter(Message.auction_id == auction.id)
@@ -551,9 +689,7 @@ def build_detail_context(db: Session, auction: Auction, user: User) -> dict:
                                          Bid.vendor_id == user.vendor_id)
                       .order_by(Bid.created_at.desc()).all() if user.is_vendor else []),
         "seconds_left": max(0, int((auction.end_at - datetime.utcnow()).total_seconds())),
-        "approval": (db.query(Approval).filter(Approval.auction_id == auction.id)
-                       .order_by(Approval.id.desc()).first()),
-        "ApprovalStatus": ApprovalStatus, "AuctionStatus": AuctionStatus,
+        "AuctionStatus": AuctionStatus,
     }
 
 
@@ -570,6 +706,11 @@ def live_fragment(auction_id: int, request: Request, user: User = Depends(curren
     """Polled every few seconds by the auction page to refresh prices and the clock."""
     auction = visible_auction(db, auction_id, user)
     context = build_detail_context(db, auction, user)
+    from ..security import csrf_token_for
     from ..web import templates
-    return templates.TemplateResponse(request, "partials/live_board.html",
-                                      {**context, "user": user, "request": request})
+    # The refreshed board contains the bid forms, so it has to carry the token
+    # those forms post back, or bidding would stop working after one refresh.
+    return templates.TemplateResponse(
+        request, "partials/live_board.html",
+        {**context, "user": user, "request": request,
+         "csrf_token": csrf_token_for(request)})

@@ -14,7 +14,7 @@
       <li><b>You set a ceiling.</b> The starting price is the most you are willing to pay per unit.</li>
       <li><b>Your suppliers compete.</b> Each new bid has to be lower than the current best, by an amount you choose.</li>
       <li><b>The clock protects everyone.</b> A bid in the last moments pushes the finish line back, so nobody wins by sniping.</li>
-      <li><b>You award.</b> Give a line to one supplier or split it across several. Everyone gets an email either way.</li>
+      <li><b>You award.</b> Each item goes to one supplier, for the whole quantity — different items can go to different suppliers. Everyone gets an email either way.</li>
     </ol>
   </div>
 
@@ -56,6 +56,7 @@
       vendors received, and when.</div>
   </div>
   <form method="post" action="/onboarding/done" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="btn ghost" type="submit">Got it — take me to the dashboard</button>
   </form>
 </div>

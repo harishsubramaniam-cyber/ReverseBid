@@ -11,9 +11,11 @@ House rules (all configurable per auction):
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from . import notify
@@ -22,6 +24,9 @@ from .models import (Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementT
                      Participant, User, Vendor)
 from .utils import alias_for, fmt_money
 
+#: The smallest price anyone can bid. Below this there is nothing left to win.
+MIN_PRICE = 0.01
+
 
 class BidError(ValueError):
     """Raised with a plain-language message that is shown straight to the bidder."""
@@ -29,9 +34,22 @@ class BidError(ValueError):
 
 # ------------------------------------------------------------------ ranking
 def line_bids(db: Session, line_id: int) -> list[Bid]:
+    """The live bids on a line, cheapest first. Withdrawn bids are out of the race."""
     return (db.query(Bid)
               .filter(Bid.line_id == line_id, Bid.withdrawn.is_(False))
               .order_by(Bid.unit_price.asc(), Bid.created_at.asc()).all())
+
+
+def all_line_bids(db: Session, line_id: int) -> list[Bid]:
+    """Every bid ever placed on a line, withdrawn ones included, newest last.
+
+    Ranking must ignore withdrawn bids, but anything that claims to show the
+    history of an item has to show them - a bid that was placed and pulled is
+    exactly what a buyer reviewing an auction needs to see.
+    """
+    return (db.query(Bid)
+              .filter(Bid.line_id == line_id)
+              .order_by(Bid.created_at.asc(), Bid.id.asc()).all())
 
 
 def best_per_vendor(db: Session, line_id: int) -> list[Bid]:
@@ -63,6 +81,18 @@ def vendor_best(db: Session, line_id: int, vendor_id: int) -> Bid | None:
         if bid.vendor_id == vendor_id:
             return bid
     return None
+
+
+def vendor_floor(db: Session, line_id: int, vendor_id: int) -> Bid | None:
+    """The lowest price this vendor has ever offered on the line.
+
+    Withdrawn bids count here. Otherwise a bidder could withdraw a keen price
+    and then re-bid higher, walking their own offer back up - which is exactly
+    what "a new bid has to be lower than your own last bid" exists to stop.
+    """
+    return (db.query(Bid)
+              .filter(Bid.line_id == line_id, Bid.vendor_id == vendor_id)
+              .order_by(Bid.unit_price.asc(), Bid.created_at.asc()).first())
 
 
 def vendor_rank(db: Session, line_id: int, vendor_id: int) -> int | None:
@@ -131,6 +161,8 @@ class BidWindow:
     min_allowed: float        # lowest price accepted (reference - max decrement)
     min_step: float
     max_step: float | None
+    #: True when the price has fallen so far that no legal bid is left.
+    exhausted: bool = False
 
     @property
     def suggestion(self) -> float | None:
@@ -139,13 +171,23 @@ class BidWindow:
     @property
     def open_ended(self) -> bool:
         """No ceiling and no bids yet - the bidder names the opening price."""
-        return self.max_allowed is None
+        return self.max_allowed is None and not self.exhausted
 
 
 def decrement_value(auction: Auction, reference: float, amount: float) -> float:
+    """How much lower the next bid has to be, in money.
+
+    A percentage of a cheap unit can round to nothing, which would quietly turn
+    the rule off, so any decrement the buyer actually asked for is worth at
+    least one paisa.
+    """
+    if not amount:
+        return 0.0
     if auction.decrement_type == DecrementType.PERCENT:
-        return round(reference * amount / 100.0, 2)
-    return round(amount, 2)
+        step = round(reference * amount / 100.0, 2)
+    else:
+        step = round(amount, 2)
+    return max(step, MIN_PRICE)
 
 
 def bid_window(db: Session, auction: Auction, line: AuctionLine) -> BidWindow:
@@ -153,77 +195,139 @@ def bid_window(db: Session, auction: Auction, line: AuctionLine) -> BidWindow:
     if current is None and not line.has_ceiling:
         # No ceiling, no bids: anything positive opens the line.
         return BidWindow(reference=None, reference_is_ceiling=True, max_allowed=None,
-                         min_allowed=0.01, min_step=0.0, max_step=None)
+                         min_allowed=MIN_PRICE, min_step=0.0, max_step=None)
 
-    reference = current.unit_price if current else line.starting_price
+    reference = round(current.unit_price if current else line.starting_price, 2)
     min_step = decrement_value(auction, reference, auction.min_decrement or 0.0)
-    max_step = decrement_value(auction, reference, auction.max_decrement) if auction.max_decrement else None
+    max_step = (decrement_value(auction, reference, auction.max_decrement)
+                if auction.max_decrement else None)
     if current:
-        max_allowed = round(reference - min_step, 2)
+        max_allowed = round(reference - max(min_step, MIN_PRICE), 2)
+        if max_allowed < MIN_PRICE:
+            # The price has bottomed out: there is no price both below the
+            # current best by the required step and still worth money. Say so
+            # rather than inviting a one-paisa bid.
+            return BidWindow(reference=reference, reference_is_ceiling=False,
+                             max_allowed=None, min_allowed=MIN_PRICE, min_step=min_step,
+                             max_step=max_step, exhausted=True)
     else:
         # The very first bid only has to sit at or below the ceiling.
         max_allowed = round(reference, 2)
-    min_allowed = round(reference - max_step, 2) if max_step else 0.01
+    min_allowed = round(reference - max_step, 2) if max_step else MIN_PRICE
     return BidWindow(reference=reference, reference_is_ceiling=current is None,
-                     max_allowed=max(max_allowed, 0.01), min_allowed=max(min_allowed, 0.01),
+                     max_allowed=max_allowed, min_allowed=max(min_allowed, MIN_PRICE),
                      min_step=min_step, max_step=max_step)
 
 
 # ------------------------------------------------------------------ placing bids
+#: One lock per line, so two bids on the same item cannot be checked against
+#: the same "current lowest" and both be accepted. Deployments that run several
+#: worker processes need the database to do this instead - see _lock_auction.
+_line_locks: dict[int, threading.Lock] = {}
+_line_locks_guard = threading.Lock()
+
+
+def _line_lock(line_id: int) -> threading.Lock:
+    with _line_locks_guard:
+        return _line_locks.setdefault(line_id, threading.Lock())
+
+
+def _lock_auction(db: Session, auction_id: int) -> None:
+    """Take a database row lock on the auction, where the database has them.
+
+    SQLite has no row locks, but it also has no second worker process to race
+    with in the setup this ships as; PostgreSQL does, and this is what keeps
+    two workers honest.
+    """
+    try:
+        if db.get_bind().dialect.name == "sqlite":
+            return
+        db.query(Auction).filter(Auction.id == auction_id).with_for_update().first()
+    except Exception:            # pragma: no cover - dialect without FOR UPDATE
+        pass
+
+
 def place_bid(db: Session, auction: Auction, line: AuctionLine, user: User,
               unit_price: float, note: str = "", ip: str = "") -> Bid:
     if not user.vendor_id:
         raise BidError("Only vendor users can bid.")
-    if auction.status != AuctionStatus.LIVE:
-        raise BidError("This auction is not open for bidding right now.")
-    if datetime.utcnow() >= auction.end_at:
-        raise BidError("The auction has just closed, so no further bids can be accepted.")
-    if not db.query(Participant).filter_by(auction_id=auction.id,
-                                           vendor_id=user.vendor_id).first():
-        raise BidError("You are not on the invited bidder list for this auction.")
     if unit_price is None or not math.isfinite(unit_price) or unit_price <= 0:
         raise BidError("Enter a real price greater than zero.")
     if unit_price > 1e12:
         raise BidError("That price is too large to be real. Check for an extra digit.")
-
     unit_price = round(float(unit_price), 2)
-    window = bid_window(db, auction, line)
-    previous_best = best_bid(db, line.id)
 
-    if line.has_ceiling and unit_price > line.starting_price:
-        raise BidError(
-            f"Your price is above the starting price of {fmt_money(line.starting_price)}. "
-            "In a reverse auction the starting price is the most the buyer will pay, so your "
-            "bid has to be at or below it.")
-    if window.max_allowed is not None and unit_price > window.max_allowed:
-        raise BidError(
-            f"Too high. The current lowest bid is {fmt_money(window.reference)} and you must go "
-            f"at least {fmt_money(window.min_step)} below it — so "
-            f"{fmt_money(window.max_allowed)} or less.")
-    if window.max_step and unit_price < window.min_allowed:
-        raise BidError(
-            f"Too big a drop in one step. You can go down by at most "
-            f"{fmt_money(window.max_step)} at a time, so {fmt_money(window.min_allowed)} "
-            "is the lowest you can bid right now.")
+    with _line_lock(line.id):
+        _lock_auction(db, auction.id)
+        # Re-read: another bid may have moved the price or the clock since the
+        # page was drawn, and in a second worker since this request started.
+        db.refresh(auction)
+        db.refresh(line)
 
-    own = vendor_best(db, line.id, user.vendor_id)
-    if own and unit_price >= own.unit_price:
-        raise BidError(f"You have already bid {fmt_money(own.unit_price)} on this item. "
-                       "A new bid has to be lower than your own last bid.")
+        if auction.status != AuctionStatus.LIVE:
+            raise BidError("This auction is not open for bidding right now.")
+        if datetime.utcnow() >= auction.end_at:
+            raise BidError("The auction has just closed, so no further bids can be accepted.")
+        if not db.query(Participant).filter_by(auction_id=auction.id,
+                                               vendor_id=user.vendor_id).first():
+            raise BidError("You are not on the invited bidder list for this auction.")
 
-    bid = Bid(auction_id=auction.id, line_id=line.id, vendor_id=user.vendor_id,
-              user_id=user.id, unit_price=unit_price, qty=line.qty,
-              total=round(unit_price * line.qty, 2), note=note[:400])
-    db.add(bid)
-    db.flush()
+        window = bid_window(db, auction, line)
+        previous_best = best_bid(db, line.id)
+        ceiling = round(line.starting_price, 2) if line.has_ceiling else None
 
-    label = line_label(line)
-    record(db, action="bid.place", entity_type="bid", entity_id=bid.id, actor=user,
-           auction_id=auction.id, ip=ip,
-           detail={"line": label, "unit_price": unit_price, "total": bid.total})
+        if ceiling is not None and unit_price > ceiling:
+            raise BidError(
+                f"Your price is above the starting price of {fmt_money(ceiling)}. "
+                "In a reverse auction the starting price is the most the buyer will pay, so "
+                "your bid has to be at or below it.")
+        if window.exhausted:
+            raise BidError(
+                f"The lowest bid is already {fmt_money(window.reference)}, and going "
+                f"{fmt_money(window.min_step)} below that would leave nothing to bid. "
+                "Bidding on this item has gone as far as it can.")
+        if window.max_allowed is not None and unit_price > window.max_allowed:
+            raise BidError(
+                f"Too high. The current lowest bid is {fmt_money(window.reference)} and you "
+                f"must go at least {fmt_money(window.min_step)} below it — so "
+                f"{fmt_money(window.max_allowed)} or less.")
+        # Belt and braces for the case where the required step rounded down to
+        # nothing: a new bid still has to be genuinely lower, never a match.
+        if previous_best and unit_price >= window.reference:
+            raise BidError(
+                f"Too high. The current lowest bid is {fmt_money(window.reference)} and your "
+                "bid has to come in below it.")
+        if window.max_step and unit_price < window.min_allowed:
+            raise BidError(
+                f"Too big a drop in one step. You can go down by at most "
+                f"{fmt_money(window.max_step)} at a time, so {fmt_money(window.min_allowed)} "
+                "is the lowest you can bid right now.")
 
-    extended = maybe_extend(db, auction, user)
-    db.commit()
+        own = vendor_floor(db, line.id, user.vendor_id)
+        if own and unit_price >= own.unit_price:
+            if own.withdrawn:
+                raise BidError(
+                    f"You bid {fmt_money(own.unit_price)} on this item earlier and withdrew "
+                    "it. A new bid still has to be lower than that — withdrawing a bid does "
+                    "not let you offer a higher price. Speak to the buyer if that price was "
+                    "a mistake.")
+            raise BidError(f"You have already bid {fmt_money(own.unit_price)} on this item. "
+                           "A new bid has to be lower than your own last bid.")
+
+        bid = Bid(auction_id=auction.id, line_id=line.id, vendor_id=user.vendor_id,
+                  user_id=user.id, unit_price=unit_price, qty=line.qty,
+                  total=round(unit_price * line.qty, 2), note=note[:400])
+        db.add(bid)
+        db.flush()
+
+        label = line_label(line)
+        record(db, action="bid.place", entity_type="bid", entity_id=bid.id, actor=user,
+               auction_id=auction.id, ip=ip,
+               detail={"line": label, "unit_price": unit_price, "total": bid.total})
+
+        extended = maybe_extend(db, auction, user)
+        extended_by = auction.extend_by_seconds
+        db.commit()
 
     rank = vendor_rank(db, line.id, user.vendor_id) or 1
     notify.bid_received(db, auction, user, label, unit_price, rank)
@@ -234,7 +338,7 @@ def place_bid(db: Session, auction: Auction, line: AuctionLine, user: User,
         notify.outbid(db, auction, previous_best.vendor, label,
                       new_best=unit_price, your_price=previous_best.unit_price)
     if extended:
-        notify.auction_extended(db, auction, auction.extend_by_seconds)
+        notify.auction_extended(db, auction, extended_by)
     return bid
 
 
@@ -245,6 +349,8 @@ def withdraw_bid(db: Session, bid: Bid, user: User, reason: str = "", ip: str = 
                        "Speak to the buyer if this bid was a mistake.")
     if user.vendor_id != bid.vendor_id and not user.is_buyer_side:
         raise BidError("You can only withdraw your own bids.")
+    if bid.withdrawn:
+        raise BidError("That bid has already been withdrawn.")
     bid.withdrawn = True
     bid.withdrawn_at = datetime.utcnow()
     bid.withdraw_reason = reason[:400]
@@ -262,16 +368,36 @@ def line_label(line: AuctionLine) -> str:
 
 # ------------------------------------------------------------------ auto-extension
 def maybe_extend(db: Session, auction: Auction, actor: User | None = None) -> bool:
+    """Push the finish line back for a bid that landed in the closing window.
+
+    The move is written as one conditional UPDATE guarded on the extension
+    count we read, so two bids arriving together cannot both claim the same
+    extension - which would tell every bidder twice that the clock had moved
+    while it only moved once.
+    """
     if not auction.auto_extend:
         return False
-    if auction.extensions_used >= (auction.max_extensions or 0):
+    used = auction.extensions_used or 0
+    if used >= (auction.max_extensions or 0):
+        return False
+    if not auction.extend_by_seconds or auction.extend_by_seconds <= 0:
         return False
     remaining = (auction.end_at - datetime.utcnow()).total_seconds()
-    if remaining > auction.extend_trigger_seconds:
+    if remaining <= 0 or remaining > auction.extend_trigger_seconds:
         return False
-    auction.end_at = auction.end_at + timedelta(seconds=auction.extend_by_seconds)
-    auction.extensions_used += 1
-    auction.ending_soon_notified = False
+
+    new_end = auction.end_at + timedelta(seconds=auction.extend_by_seconds)
+    result = db.execute(
+        update(Auction)
+        .where(Auction.id == auction.id,
+               Auction.extensions_used == used,
+               Auction.status == AuctionStatus.LIVE)
+        .values(end_at=new_end, extensions_used=used + 1, ending_soon_notified=False))
+    if result.rowcount != 1:
+        # Somebody else got there first. Pick up their change and say nothing.
+        db.refresh(auction)
+        return False
+    db.refresh(auction)
     record(db, action="auction.auto_extend", entity_type="auction", entity_id=auction.id,
            actor=actor, auction_id=auction.id,
            detail={"new_end": auction.end_at.isoformat(),
@@ -281,15 +407,39 @@ def maybe_extend(db: Session, auction: Auction, actor: User | None = None) -> bo
 
 # ------------------------------------------------------------------ savings
 def line_result(db: Session, line: AuctionLine) -> dict:
+    """Where one line ended up, and what it saved.
+
+    Once the line has been awarded the awarded price is what the buyer will
+    actually pay, so that - not the lowest bid - is the honest final figure.
+    Without it the line-level savings never added up to the auction total when
+    the buyer awarded to anyone but L1, or negotiated the price.
+    """
     ranked = best_per_vendor(db, line.id)
     lowest = ranked[0] if ranked else None
     highest = highest_bid(db, line.id)
-    final_unit = lowest.unit_price if lowest else (line.starting_price or 0.0)
+    award = db.query(Award).filter(Award.line_id == line.id).first()
     baseline = line_baseline(db, line)
+    decided = line.auction is not None and line.auction.status == AuctionStatus.AWARDED
+    if award:
+        final_unit = award.unit_price
+        basis = "awarded"
+    elif decided:
+        # The auction has been awarded and this line was left out, so nothing
+        # was bought and nothing was saved. Counting the best bid here would
+        # claim a saving the buyer never made, and the line figures would not
+        # add up to the auction total.
+        final_unit = (baseline / line.qty) if line.qty else 0.0
+        basis = "not awarded"
+    elif lowest:
+        final_unit = lowest.unit_price
+        basis = "best bid"
+    else:
+        final_unit = line.starting_price or 0.0
+        basis = "no bids"
     final_value = final_unit * line.qty
     return {
         "line": line, "bids": len(line_bids(db, line.id)), "bidders": len(ranked),
-        "lowest": lowest, "highest": highest,
+        "lowest": lowest, "highest": highest, "award": award, "basis": basis,
         "final_unit": final_unit, "baseline": baseline, "final_value": final_value,
         "savings": baseline - final_value,
         "savings_pct": ((baseline - final_value) / baseline * 100) if baseline else 0.0,

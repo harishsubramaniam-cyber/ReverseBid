@@ -11,6 +11,7 @@
     {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
     {% if flash %}<div class="alert {{ flash.k }}">{{ flash.m }}</div>{% endif %}
     <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="next" value="{{ next }}">
       <div class="field"><label for="email">Email</label>
         <input id="email" type="email" name="email" value="{{ email or '' }}" required autofocus></div>

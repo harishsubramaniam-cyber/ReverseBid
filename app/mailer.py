@@ -63,6 +63,30 @@ def _ensure_worker() -> None:
         _worker_started = True
 
 
+def requeue_pending(retry_failed: bool = True) -> int:
+    """Pick up anything left over from a previous run.
+
+    The queue only ever lived in memory, so a message written just before the
+    app stopped sat at "queued" for ever: never sent, never in the outbox, and
+    showing red on the Outbox page with no way to try again. Called on startup
+    so a restart is also the retry.
+    """
+    wanted = ["queued", "failed"] if retry_failed else ["queued"]
+    db = SessionLocal()
+    try:
+        rows = (db.query(EmailMessage.id)
+                  .filter(EmailMessage.status.in_(wanted))
+                  .order_by(EmailMessage.id.asc()).all())
+    finally:
+        db.close()
+    if not rows:
+        return 0
+    _ensure_worker()
+    for (msg_id,) in rows:
+        _queue.put(msg_id)
+    return len(rows)
+
+
 def _worker() -> None:  # pragma: no cover - background thread
     while True:
         msg_id = _queue.get()
@@ -81,6 +105,7 @@ def deliver(msg_id: int) -> str:
         msg = db.get(EmailMessage, msg_id)
         if not msg or msg.status in ("sent", "outbox"):
             return msg.status if msg else "missing"
+        msg.error = ""
         mime = _build_mime(msg)
         if config.EMAIL_ENABLED:
             try:

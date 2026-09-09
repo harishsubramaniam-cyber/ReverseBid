@@ -32,6 +32,7 @@
 
 <form method="post" id="auction-form" novalidate
       action="{{ '/auctions/' ~ auction.id ~ '/edit' if auction else '/auctions/new' }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
 <!-- 1 ---------------------------------------------------------------------- -->
 <section class="step-card">
@@ -269,6 +270,7 @@
   <p class="muted small">Saved to your vendor list <b>and invited to this auction</b>.
     A name and an email is all we need.</p>
   <form data-quick data-mode="vendor" action="/masters/quick/vendor">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field"><label>Company name</label><input name="name" required>
       <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
     <div class="field"><label>Main email</label><input type="email" name="email" required>
@@ -284,6 +286,7 @@
   <p class="muted small">It is saved to your item list <b>and added to this auction</b> as a new
     row. Just a name is enough — the rest can wait.</p>
   <form data-quick data-mode="item" action="/masters/quick/item">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field"><label>Item name</label><input name="name" required>
       <p class="hint">{{ FIELD_HELP.item_name }}</p></div>
     <div class="field"><label>Default unit <span class="optional">(optional)</span></label>
@@ -297,6 +300,7 @@
   <h3>Create a new unit</h3>
   <p class="muted small">A short code you measure in, like KG or NOS.</p>
   <form data-quick data-mode="unit" action="/masters/quick/unit">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field"><label>Short code</label><input name="code" required placeholder="KG">
       <p class="hint">{{ FIELD_HELP.unit_code }}</p></div>
     <div class="field"><label>Full name <span class="optional">(optional)</span></label>

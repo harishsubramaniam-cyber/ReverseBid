@@ -3,6 +3,8 @@ database does not. Enough for SQLite in the field, without a migration tool.
 """
 from __future__ import annotations
 
+import enum as _enum
+
 from sqlalchemy import inspect, text
 
 from .db import Base, engine
@@ -10,6 +12,26 @@ from .db import Base, engine
 #: Types SQLite accepts in a bare ALTER TABLE ... ADD COLUMN.
 _SQL_TYPE = {"TEXT": "TEXT", "VARCHAR": "TEXT", "INTEGER": "INTEGER",
              "FLOAT": "FLOAT", "BOOLEAN": "BOOLEAN", "DATETIME": "DATETIME"}
+
+
+def _literal(arg) -> str | None:
+    """The default value as SQL, or None when we should not write one.
+
+    Enum columns are the trap here: SQLAlchemy stores the member *name*, so a
+    default of ``Role.BUYER`` has to be written as ``'BUYER'``. Writing
+    ``str(Role.BUYER)`` instead put the text "Role.BUYER" in the column, and
+    every row it touched then failed to load with a LookupError - a restart to
+    pick up a new column took the whole app down.
+    """
+    if isinstance(arg, _enum.Enum):
+        return "'" + str(arg.name).replace("'", "''") + "'"
+    if isinstance(arg, bool):
+        return str(int(arg))
+    if isinstance(arg, (int, float)):
+        return str(arg)
+    if isinstance(arg, str):
+        return "'" + arg.replace("'", "''") + "'"
+    return None
 
 
 def run() -> list[str]:
@@ -30,9 +52,10 @@ def run() -> list[str]:
                 default = ""
                 if column.default is not None and getattr(column.default, "arg", None) is not None:
                     arg = column.default.arg
-                    if isinstance(arg, (str, int, float, bool)) and not callable(arg):
-                        literal = f"'{arg}'" if isinstance(arg, str) else str(int(arg) if isinstance(arg, bool) else arg)
-                        default = f" DEFAULT {literal}"
+                    if not callable(arg):
+                        literal = _literal(arg)
+                        if literal is not None:
+                            default = f" DEFAULT {literal}"
                 conn.execute(text(
                     f"ALTER TABLE {table.name} ADD COLUMN {column.name} {sql_type}{default}"))
                 added.append(f"{table.name}.{column.name}")

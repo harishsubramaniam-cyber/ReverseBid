@@ -13,6 +13,11 @@
   <a class="btn ghost" href="/auctions/{{ auction.id }}">Back to the auction</a>
 </div>
 
+{% if error %}
+<div class="alert error" role="alert"><svg><use href="#i-alert"/></svg>
+  <div><b>Nothing was awarded.</b> {{ error }} Everything else you chose is still below.</div></div>
+{% endif %}
+
 <div class="alert info"><svg><use href="#i-info"/></svg>
   <div>Every line is pre-set to its <b>L1</b> — the lowest bidder. Change any of them below.
   Nothing is sent until you press <b>Confirm award</b>; then winners are emailed what they won,
@@ -20,6 +25,7 @@
 
 <form method="post" id="award-form" action="/auctions/{{ auction.id }}/award"
       data-confirm="Confirm the award and email every bidder?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
 {% if bidders|length > 1 %}
 <div class="card tight" style="display:flex; gap:12px; flex-wrap:wrap; align-items:center">
@@ -92,13 +98,12 @@
         <div class="field" style="max-width:230px; margin:0">
           <label for="price_{{ line.id }}">Award price per unit ({{ currency }})</label>
           <input id="price_{{ line.id }}" name="price_{{ line.id }}" type="number" step="0.01" min="0"
-                 value="{{ row.existing.unit_price if row.existing else (row.best.unit_price if row.best else '') }}">
+                 value="{{ row.price if row.price is not none else '' }}">
           <p class="hint">{{ FIELD_HELP.award_price }}</p>
         </div>
         <div class="field" style="margin:0">
           <label for="note_{{ line.id }}">Note <span class="optional">(optional, seen by you only)</span></label>
-          <input id="note_{{ line.id }}" name="note_{{ line.id }}"
-                 value="{{ row.existing.notes if row.existing else '' }}">
+          <input id="note_{{ line.id }}" name="note_{{ line.id }}" value="{{ row.note or '' }}">
         </div>
       </div>
 
@@ -152,7 +157,14 @@ function awardAll(vendorId) {
     var target = vendorId
       ? options.filter(function (r) { return r.value === vendorId; })[0]
       : options.filter(function (r) { return r.value; })[0];   // first row = L1
-    if (target) { target.checked = true; target.dispatchEvent(new Event("change")); }
+    // The handler above is delegated from `document`, so this event has to
+    // bubble. Without `bubbles: true` the handler never ran: the winner radio
+    // moved but the price box kept the previous bidder's price, and the award
+    // was booked - and emailed - at a figure the winner never offered.
+    if (target) {
+      target.checked = true;
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   });
   toast(vendorId ? "Every item with a bid from that supplier is now theirs."
                  : "Every item is back with its lowest bidder.");

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -53,10 +53,15 @@ def outbox_detail(message_id: int, request: Request, user: User = Depends(buyer_
                   help_key="outbox")
 
 
-@router.get("/outbox/{message_id}/raw", response_class=PlainTextResponse)
+@router.get("/outbox/{message_id}/raw", response_class=HTMLResponse)
 def outbox_raw(message_id: int, user: User = Depends(buyer_side),
                db: Session = Depends(get_db)):
+    """The message as the recipient would see it, for the preview frame.
+
+    Served as text/plain, this showed the buyer a screen of HTML source rather
+    than the email - the whole point of the Outbox is seeing what went out.
+    """
     message = db.get(EmailMessage, message_id)
     if not message:
         raise HTTPException(404, "That email is not in the outbox.")
-    return message.html_body
+    return HTMLResponse(message.html_body)

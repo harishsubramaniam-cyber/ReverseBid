@@ -77,7 +77,9 @@
             <div class="muted small">{{ auction.lines|length }} item(s) · {{ auction.participants|length }} bidder(s)</div></td>
         <td><span class="pill {{ auction.status.value }}">{{ auction.status.value.replace('_',' ') }}</span></td>
         <td class="small">{{ fmt_dt(auction.end_at, False) }}</td>
-        <td class="num mono">{{ fmt_money(auction.baseline_value) }}</td>
+        {# The engine's baseline, not the model's: where an item had no ceiling
+           the model reports zero, which read as savings against no budget. #}
+        <td class="num mono">{% set s = summaries.get(auction.id) %}{{ fmt_money(s.baseline if s else auction.baseline_value) }}</td>
         <td class="num mono">{% set s = summaries.get(auction.id) %}{% if s and s.savings > 0 %}<b style="color:var(--good)">{{ fmt_money(s.savings) }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td><a class="btn ghost sm" href="/auctions/{{ auction.id }}">Open</a></td>
       </tr>

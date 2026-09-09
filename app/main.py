@@ -10,11 +10,13 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, migrate, scheduler
+from fastapi import Depends
+
+from . import config, mailer, migrate, scheduler
 from .db import Base, SessionLocal, engine
 from .routers import (assistant, auctions, auth, awards, bidding, dashboard,
                       masters, messages, notifications, reports)
-from .security import current_user_optional
+from .security import csrf_protect, current_user_optional
 from .web import render
 
 
@@ -24,6 +26,11 @@ async def lifespan(app: FastAPI):
     added = migrate.run()
     if added:
         print("Database updated with new columns:", ", ".join(added))
+    # Anything left queued or failed by a previous run goes out now: the send
+    # queue only lives in memory, so a restart is also the retry.
+    waiting = mailer.requeue_pending()
+    if waiting:
+        print(f"Retrying {waiting} email(s) left over from the last run.")
     task = asyncio.create_task(scheduler.run_forever())
     yield
     task.cancel()
@@ -32,10 +39,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=f"{config.APP_NAME} — reverse auction platform", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(config.BASE_DIR / "app" / "static")), name="static")
 
+#: Every route goes through the CSRF check. It does nothing for GET, and for
+#: anything that changes data it insists the request came from a page this app
+#: rendered - otherwise another site could post to it using someone's cookie.
 for router in (auth.router, dashboard.router, masters.router, auctions.router, bidding.router,
                awards.router, messages.router, reports.router,
                notifications.router, assistant.router):
-    app.include_router(router)
+    app.include_router(router, dependencies=[Depends(csrf_protect)])
 
 
 #: Plain-language wording for anything that reaches the error screen.

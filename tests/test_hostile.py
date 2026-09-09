@@ -42,8 +42,21 @@ def check(label, ok, extra=""):
         FAILS.append(label)
 
 
+class Client(TestClient):
+    """Sends the CSRF token back, the way a real form does."""
+
+    def post(self, url, **kwargs):
+        token = self.cookies.get("ra_csrf")
+        if token:
+            headers = dict(kwargs.get("headers") or {})
+            headers.setdefault("X-CSRF-Token", token)
+            kwargs["headers"] = headers
+        return super().post(url, **kwargs)
+
+
 def login(email):
-    c = TestClient(app, base_url="http://test")
+    c = Client(app, base_url="http://test")
+    c.get("/login")
     c.post("/login", data={"email": email, "password": PW, "next": "/"}, follow_redirects=False)
     c.headers.update(BROWSER)
     return c
@@ -61,6 +74,17 @@ def flash_of(response) -> str:
         return json.loads(jar["ra_flash"].value)["m"]
     except Exception:
         return ""
+
+
+def told(response) -> str:
+    """What the person is actually shown: the flash on a redirect, or the page
+    itself where the form now comes back with its values and the reason."""
+    flash = flash_of(response)
+    if flash:
+        return flash
+    if "text/html" in response.headers.get("content-type", ""):
+        return response.text
+    return ""
 
 
 def build_world(db):
@@ -280,7 +304,7 @@ def main() -> int:
     r = b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
                data={f"winner_{line.id}": str(vendors[2].id)})
     check("awarding to a bidder who never bid is refused",
-          db.query(Award).count() == 0 and "did not bid" in flash_of(r), flash_of(r)[:46])
+          db.query(Award).count() == 0 and "did not bid" in told(r), told(r)[:46])
     r = b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
                data={f"winner_{line.id}": str(vendors[1].id), f"price_{line.id}": "-4"})
     check("a negative award price is refused", db.query(Award).count() == 0)
@@ -303,10 +327,12 @@ def main() -> int:
     print("\n10. Masters and messages")
     r = b.post("/masters/vendors", data={"name": "", "email": "x@y.com"},
                follow_redirects=False)
-    check("a vendor with no name is refused", "name" in flash_of(r).lower(), flash_of(r)[:40])
+    check("a vendor with no name is refused, and the form keeps what was typed",
+          "needs a company name" in told(r) and "x@y.com" in told(r))
     r = b.post("/masters/vendors", data={"name": "Nameless", "email": "not-an-email"},
                follow_redirects=False)
-    check("a vendor with a bad email is refused", "does not look like" in flash_of(r))
+    check("a vendor with a bad email is refused, and the form keeps what was typed",
+          "does not look like" in told(r) and "Nameless" in told(r))
     r = b.post("/masters/vendors", data={"name": "Acme 1 renamed", "email": "v1@t.local"},
                follow_redirects=False)
     db.expire_all()
@@ -314,9 +340,9 @@ def main() -> int:
           db.query(Vendor).filter_by(email="v1@t.local").first().name == "Acme 1 renamed",
           flash_of(r)[:56])
     r = b.post("/masters/items", data={"name": "  "}, follow_redirects=False)
-    check("an item with no name is refused", "name" in flash_of(r).lower())
+    check("an item with no name is refused", "needs a name" in told(r))
     r = b.post("/masters/units", data={"code": ""}, follow_redirects=False)
-    check("a unit with no code is refused", "code" in flash_of(r).lower())
+    check("a unit with no code is refused", "needs a short code" in told(r))
 
     r = b.post(f"/auctions/{auction.id}/messages",
                data={"body": "hello", "vendor_id": "9999"}, follow_redirects=False)

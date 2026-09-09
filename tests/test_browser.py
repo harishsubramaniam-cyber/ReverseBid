@@ -152,6 +152,8 @@ def run(page, base):
     check("a typed price survives the refresh",
           bidder.locator("input[name=unit_price]").nth(0).input_value() == "87.5",
           bidder.locator("input[name=unit_price]").nth(0).input_value())
+    hint = bidder.locator("[id^=total]").first.inner_text()
+    check("...and so does the line total under it", "That is" in hint, hint[:44] or "empty")
     chip = bidder.locator("[data-fill]").nth(1)
     want = chip.get_attribute("data-fill")
     chip.click()
@@ -164,9 +166,58 @@ def run(page, base):
     check("the bid lands", "L1" in bidder.locator(".alert").first.inner_text(),
           bidder.locator(".alert").first.inner_text()[:44])
 
+    # A second bidder, so the award screen has a real choice to make.
+    ctx2 = page.context.browser.new_context()
+    bidder2 = ctx2.new_page()
+    bidder2.on("pageerror", lambda e: js_errors.append(str(e)))
+    bidder2.on("dialog", lambda d: d.accept())
+    bidder2.goto(base + "/login")
+    bidder2.fill("#email", "vendor2@demo.in")
+    bidder2.fill("#password", "demo1234")
+    bidder2.click("button[type=submit]")
+    bidder2.wait_for_load_state("networkidle")
+    bidder2.goto(url)
+    bidder2.wait_for_timeout(500)
+    bidder2.locator("input[name=unit_price]").nth(0).fill("85")
+    bidder2.locator("button:has-text('Place bid')").nth(0).click()
+    bidder2.wait_for_load_state("networkidle")
+    check("the second bidder takes L1",
+          "L1" in bidder2.locator(".alert").first.inner_text(),
+          bidder2.locator(".alert").first.inner_text()[:44])
+
     # ------------------------------------------------------------------ 4
-    print("\n4. Nothing threw along the way")
+    print("\n4. The award screen books the price the buyer can see")
+    page.goto(url)
+    page.wait_for_timeout(300)
+    page.locator("button:has-text('Close bidding now')").click()
+    page.wait_for_load_state("networkidle")
+    page.goto(page.url.split("?")[0] + "/award")
+    page.wait_for_timeout(400)
+    chips = page.locator(".chip")
+    labels = [chips.nth(i).inner_text() for i in range(chips.count())]
+    everything_to = [i for i, text in enumerate(labels) if text.startswith("Everything to")]
+    check("the award screen offers a quick fill per bidder", len(everything_to) >= 2,
+          " | ".join(labels))
+    mismatches = []
+    for index in everything_to:
+        chips.nth(index).click()
+        page.wait_for_timeout(250)
+        checked = page.locator("input[type=radio][data-line]:checked").first
+        want = checked.get_attribute("data-price")
+        got = page.locator("input[name^=price_]").first.input_value()
+        if want and float(got or 0) != float(want):
+            mismatches.append(f"{labels[index]}: box {got}, winner's bid {want}")
+    check("every quick fill puts the winner's own price in the box",
+          not mismatches, "; ".join(mismatches))
+    winner_labels = page.locator("input[type=radio][data-line]:checked ~ .t")
+    check("the chosen row is the one labelled Winner",
+          winner_labels.count() >= 1 and "Winner" in winner_labels.first.inner_text(),
+          winner_labels.first.inner_text() if winner_labels.count() else "none")
+
+    # ------------------------------------------------------------------ 5
+    print("\n5. Nothing threw along the way")
     bidder.goto(base + "/logout")
+    bidder.wait_for_timeout(200)
     page.goto(base + "/login")
     page.keyboard.press("Escape")                      # no drawers on this page
     page.wait_for_timeout(200)

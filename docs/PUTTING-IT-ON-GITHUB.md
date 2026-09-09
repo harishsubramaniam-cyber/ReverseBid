@@ -192,5 +192,5 @@ For your own peace of mind, here is what is in there:
 * `.env.example` — a **blank** template showing which settings exist. Your filled-in `.env` stays
   on your PC.
 
-Two commits are already in the history, with a description of what each one did. Anyone you hand
+The history already has several commits, each with a description of what it did. Anyone you hand
 this to can read that history and understand how it was built.

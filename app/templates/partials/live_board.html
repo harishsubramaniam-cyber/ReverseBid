@@ -31,7 +31,9 @@
           {{ fmt_money(entry.best.unit_price) }}
         {% else %}hidden{% endif %}
       </div>
+      {% if user.is_buyer_side or auction.show_rank %}
       <div class="muted tiny">{{ entry.ranked|length }} bidder(s)</div>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -113,6 +115,13 @@
             You are at L{{ entry.my_rank }}. Go lower to take the lead.</div>
         {% endif %}
 
+        {% if window.exhausted %}
+        <div class="range-note">
+          Bidding on this item has gone as far as it can: the lowest bid is
+          <b>{{ fmt_money(window.reference) }}</b>, and the
+          {{ fmt_money(window.min_step) }} minimum decrement would leave nothing to bid.
+        </div>
+        {% else %}
         <div class="range-note">
           {% if window.open_ended %}
             No ceiling and no bids yet — <b>name your opening price</b>. Every bid after yours
@@ -130,6 +139,7 @@
         </div>
 
         <form method="post" action="/auctions/{{ auction.id }}/bid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="line_id" value="{{ line.id }}">
           <label for="p{{ line.id }}">Your price per {{ line.unit.code if line.unit else 'unit' }}</label>
           <div class="price-input">
@@ -147,6 +157,7 @@
                   data-fill-target="#p{{ line.id }}">Use {{ fmt_money(window.suggestion) }}</button>
           {% endif %}
         </form>
+        {% endif %}
       </div>
 
       {% set mine = entry.history | selectattr('vendor_id','equalto',user.vendor_id) | list %}
@@ -161,6 +172,7 @@
             {% elif live %}
             <form method="post" action="/auctions/{{ auction.id }}/bids/{{ bid.id }}/withdraw"
                   data-confirm="Withdraw this bid? The buyer will be told and your rank recalculated.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <button class="linkbtn" type="submit">Withdraw</button></form>
             {% endif %}
           </div>

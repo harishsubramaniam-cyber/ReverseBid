@@ -116,7 +116,12 @@ def build() -> None:
             max_decrement=kwargs.pop("max_decrement", 0.0),
             show_rank=True, show_lowest_bid=True, hide_bidder_names=True,
             auto_extend=True, extend_trigger_seconds=120, extend_by_seconds=180,
-            max_extensions=5, published_at=start - timedelta(days=1), **kwargs)
+            max_extensions=5,
+            # A draft has not been published, so it must not carry a publish
+            # date - the app treats that as "the bidders already know".
+            published_at=(None if status == AuctionStatus.DRAFT
+                          else start - timedelta(days=1)),
+            **kwargs)
         db.add(auction)
         db.flush()
         for item, unit, price, qty in line_specs:
@@ -130,50 +135,66 @@ def build() -> None:
         return auction
 
     def simulate(auction: Auction, rounds: int = 3) -> None:
-        """Walk prices down from the ceiling, one round at a time."""
-        base = auction.start_at + timedelta(minutes=2)
+        """Walk prices down from the ceiling, one round at a time.
+
+        Every bid respects the auction's own minimum decrement, so the demo
+        never shows a bid history the engine would have refused.
+        """
+        step = auction.min_decrement or 0.0
         for line in auction.lines:
             best = line.starting_price
+            floor = line.starting_price * 0.7
             bidders = random.sample(vendors, k=random.choice([2, 3, 4]))
+            # The clock only ever moves forward, so the saved history reads in
+            # the same order the prices actually fell. Random timestamps used
+            # to put a higher bid after a lower one, which made the demo look
+            # like it had broken its own decrement rule.
+            when = auction.start_at + timedelta(minutes=2)
             for round_no in range(rounds):
                 for vendor in bidders:
                     if random.random() < 0.25 and round_no:
                         continue
-                    drop = best * random.uniform(0.012, 0.045)
-                    price = round(max(best - drop, line.starting_price * 0.7), 2)
-                    if price >= best:
+                    drop = max(best * random.uniform(0.012, 0.045), step)
+                    price = round(best - drop, 2)
+                    if price < floor or price > best - step or price <= 0:
                         continue
                     best = price
+                    when += timedelta(seconds=random.randint(40, 400))
                     user = next(u for u in vendor_users if u.vendor_id == vendor.id)
                     db.add(Bid(auction_id=auction.id, line_id=line.id, vendor_id=vendor.id,
                                user_id=user.id, unit_price=price, qty=line.qty,
-                               total=round(price * line.qty, 2),
-                               created_at=base + timedelta(minutes=round_no * 12 +
-                                                           random.randint(0, 9))))
+                               total=round(price * line.qty, 2), created_at=when))
         db.flush()
 
-    def award_lowest(auction: Auction, split_first: bool = False) -> None:
+    def award_lowest(auction: Auction, second_place_first: bool = False) -> None:
+        """Award each line to one bidder, for the whole quantity - the house rule.
+
+        The demo used to split the first line between two suppliers, which the
+        app itself forbids: the award screen offers no way to do it, and
+        re-saving the award silently collapsed it and changed the savings.
+        ``second_place_first`` instead shows the other real case - a buyer
+        choosing L2 over L1 on one item.
+        """
         from app import engine as eng
         for index, line in enumerate(auction.lines):
             ranked = eng.best_per_vendor(db, line.id)
             if not ranked:
                 continue
-            if split_first and index == 0 and len(ranked) > 1:
-                halves = [(ranked[0], line.qty * 0.6), (ranked[1], line.qty * 0.4)]
-            else:
-                halves = [(ranked[0], line.qty)]
-            for bid, qty in halves:
-                db.add(Award(auction_id=auction.id, line_id=line.id, vendor_id=bid.vendor_id,
-                             bid_id=bid.id, qty=qty, unit_price=bid.unit_price,
-                             total=round(qty * bid.unit_price, 2), awarded_by_id=buyer.id,
-                             awarded_at=auction.end_at + timedelta(hours=2)))
+            winner = ranked[1] if (second_place_first and index == 0 and len(ranked) > 1) \
+                else ranked[0]
+            db.add(Award(auction_id=auction.id, line_id=line.id, vendor_id=winner.vendor_id,
+                         bid_id=winner.id, qty=line.qty, unit_price=winner.unit_price,
+                         total=round(line.qty * winner.unit_price, 2), awarded_by_id=buyer.id,
+                         notes=("Chosen over the lowest bid on delivery lead time."
+                                if winner is not ranked[0] else ""),
+                         awarded_at=auction.end_at + timedelta(hours=2)))
         auction.status = AuctionStatus.AWARDED
         auction.awarded_at = auction.end_at + timedelta(hours=2)
         auction.closed_at = auction.end_at
         db.flush()
 
     # ------------------------------------------------------- 1 & 2: awarded history
-    for weeks_ago, title, picks, split in [
+    for weeks_ago, title, picks, second_first in [
         (6, "Corrugated packaging — Q1 volumes", [0, 1], True),
         (2, "MS angles and structural steel — March", [2], False),
     ]:
@@ -182,7 +203,7 @@ def build() -> None:
                                begin + timedelta(hours=2), [items[i] for i in picks],
                                description="Rate contract for the coming quarter.")
         simulate(auction, rounds=3)
-        award_lowest(auction, split_first=split)
+        award_lowest(auction, second_place_first=second_first)
 
     # ------------------------------------------------------- 3: live right now
     live = make_auction("Corrugated boxes and stretch film — live demo",

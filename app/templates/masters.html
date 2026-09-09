@@ -10,6 +10,15 @@
   <a href="?tab=units" class="{{ 'on' if tab == 'units' }}">Units ({{ units|length }})</a>
 </div>
 
+{# Whatever was typed comes back after a refusal, so nothing has to be retyped. #}
+{% set v = (pf or {}).get('vendor') or {} %}
+{% set it = (pf or {}).get('item') or {} %}
+{% set un = (pf or {}).get('unit') or {} %}
+{% if error %}
+<div class="alert error" role="alert"><svg><use href="#i-alert"/></svg>
+  <div><b>That did not save.</b> {{ error }}</div></div>
+{% endif %}
+
 <form method="get" class="card tight" style="display:flex;gap:10px;align-items:flex-end">
   <input type="hidden" name="tab" value="{{ tab }}">
   <div style="flex:1"><label for="q">Search</label><input id="q" type="search" name="q" value="{{ q }}"></div>
@@ -21,22 +30,27 @@
   <div class="card">
     <div class="card-head"><h3>Add a vendor</h3></div>
     <form method="post" action="/masters/vendors">
-      <div class="field"><label>Company name *</label><input name="name" required>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label>Company name *</label>
+        <input name="name" required value="{{ v.name or '' }}">
         <p class="hint">{{ FIELD_HELP.vendor_name }}</p></div>
-      <div class="field"><label>Main email *</label><input type="email" name="email" required>
+      <div class="field"><label>Main email *</label>
+        <input type="email" name="email" required value="{{ v.email or '' }}">
         <p class="hint">{{ FIELD_HELP.vendor_email }}</p></div>
       <div class="field"><label>Also email these people <span class="muted small">(optional)</span></label>
-        <textarea name="extra_emails" rows="2" placeholder="sales@vendor.com&#10;owner@vendor.com"></textarea>
+        <textarea name="extra_emails" rows="2" placeholder="sales@vendor.com&#10;owner@vendor.com">{{ v.extra_emails or '' }}</textarea>
         <p class="hint">{{ FIELD_HELP.vendor_extra_emails }}</p></div>
       <div class="row">
-        <div class="field"><label>Vendor code</label><input name="code"></div>
-        <div class="field"><label>Contact person</label><input name="contact_person"></div>
+        <div class="field"><label>Vendor code</label><input name="code" value="{{ v.code or '' }}"></div>
+        <div class="field"><label>Contact person</label>
+          <input name="contact_person" value="{{ v.contact_person or '' }}"></div>
       </div>
       <div class="row">
-        <div class="field"><label>Phone</label><input name="phone"></div>
-        <div class="field"><label>Tax / GST number</label><input name="gstin"></div>
+        <div class="field"><label>Phone</label><input name="phone" value="{{ v.phone or '' }}"></div>
+        <div class="field"><label>Tax / GST number</label>
+          <input name="gstin" value="{{ v.gstin or '' }}"></div>
       </div>
-      <div class="field"><label>Address</label><textarea name="address"></textarea></div>
+      <div class="field"><label>Address</label><textarea name="address">{{ v.address or '' }}</textarea></div>
       <button class="btn" type="submit">Save vendor</button>
     </form>
   </div>
@@ -54,6 +68,7 @@
           </td>
           <td><span class="pill {{ 'good' if vendor.is_active else 'closed' }}">{{ 'active' if vendor.is_active else 'archived' }}</span></td>
           <td><form method="post" action="/masters/vendors/{{ vendor.id }}/toggle">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="linkbtn" type="submit">{{ 'Archive' if vendor.is_active else 'Restore' }}</button></form></td></tr>
       {% endfor %}
       {% if not vendors %}<tr><td colspan="4" class="empty">No vendors yet.</td></tr>{% endif %}
@@ -67,6 +82,7 @@
   <p class="muted small">Everyone listed here receives the invitation, outbid alerts, closing
     reminders and the award decision.</p>
   <form method="post" action="/masters/vendors/{{ vendor.id }}/emails">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field"><label>Main email</label>
       <input type="email" name="email" value="{{ vendor.email }}" required></div>
     <div class="field"><label>Also email <span class="muted small">(one per line)</span></label>
@@ -82,16 +98,20 @@
   <div class="card">
     <div class="card-head"><h3>Add an item</h3></div>
     <form method="post" action="/masters/items">
-      <div class="field"><label>Item name *</label><input name="name" required>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label>Item name *</label>
+        <input name="name" required value="{{ it.name or '' }}">
         <p class="hint">{{ FIELD_HELP.item_name }}</p></div>
       <div class="row">
-        <div class="field"><label>Item code</label><input name="code"></div>
-        <div class="field"><label>Category</label><input name="category"></div>
+        <div class="field"><label>Item code</label><input name="code" value="{{ it.code or '' }}"></div>
+        <div class="field"><label>Category</label>
+          <input name="category" value="{{ it.category or '' }}"></div>
         <div class="field"><label>Default unit</label>
           <select name="default_unit_id"><option value="">—</option>
-            {% for unit in units %}<option value="{{ unit.id }}">{{ unit.code }}</option>{% endfor %}</select></div>
+            {% for unit in units %}<option value="{{ unit.id }}"
+              {{ 'selected' if it.default_unit_id and unit.id|string == it.default_unit_id|string }}>{{ unit.code }}</option>{% endfor %}</select></div>
       </div>
-      <div class="field"><label>Description</label><textarea name="description"></textarea></div>
+      <div class="field"><label>Description</label><textarea name="description">{{ it.description or '' }}</textarea></div>
       <button class="btn" type="submit">Save item</button>
     </form>
   </div>
@@ -104,6 +124,7 @@
           <td>{{ item.default_unit.code if item.default_unit else '—' }}</td>
           <td><span class="pill {{ 'good' if item.is_active else 'closed' }}">{{ 'active' if item.is_active else 'archived' }}</span></td>
           <td><form method="post" action="/masters/items/{{ item.id }}/toggle">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="linkbtn" type="submit">{{ 'Archive' if item.is_active else 'Restore' }}</button></form></td></tr>
       {% endfor %}
       {% if not items %}<tr><td colspan="4" class="empty">No items yet.</td></tr>{% endif %}
@@ -116,9 +137,12 @@
   <div class="card">
     <div class="card-head"><h3>Add a unit</h3></div>
     <form method="post" action="/masters/units">
-      <div class="field"><label>Short code *</label><input name="code" required placeholder="KG">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label>Short code *</label>
+        <input name="code" required placeholder="KG" value="{{ un.code or '' }}">
         <p class="hint">{{ FIELD_HELP.unit_code }}</p></div>
-      <div class="field"><label>Full name</label><input name="name" placeholder="Kilogram"></div>
+      <div class="field"><label>Full name</label>
+        <input name="name" placeholder="Kilogram" value="{{ un.name or '' }}"></div>
       <button class="btn" type="submit">Save unit</button>
     </form>
   </div>

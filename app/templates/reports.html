@@ -32,7 +32,8 @@
 
   <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
     <div><label for="date_from">From</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
-    <div><label for="date_to">To</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div><label for="date_to">To</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}">
+      <p class="hint">An auction counts in the period it was awarded or closed in.</p></div>
     <label class="check" style="margin:0"><input type="checkbox" name="include_closed" value="1" {{ 'checked' if include_closed }}>
       <span><span class="t">Include auctions not yet awarded</span>
         <span class="d">Uses the lowest bid instead of the awarded price.</span></span></label>
@@ -53,7 +54,9 @@
 
   {% if data.rows %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Reference</th><th>Auction</th><th>Date</th><th class="num">Bidders</th><th class="num">Bids</th>
+    <thead><tr><th>Reference</th><th>Auction</th>
+      <th>{{ 'Awarded on' if data.awarded_only else 'Decided on' }}</th>
+      <th class="num">Bidders</th><th class="num">Bids</th>
       <th class="num">Baseline</th><th class="num">Final</th><th class="num">Savings</th><th class="num">%</th><th>Awarded to</th></tr></thead>
     <tbody>
     {% for row in data.rows %}

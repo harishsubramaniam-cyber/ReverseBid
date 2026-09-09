@@ -1,21 +1,27 @@
-"""Password hashing, session cookies and request-level auth helpers."""
+"""Password hashing, session cookies, CSRF and request-level auth helpers."""
 from __future__ import annotations
 
 import hashlib
 import hmac
 import os
 import secrets
+import threading
+import time
 
 from fastapi import Depends, HTTPException, Request
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
-from .config import SECRET_KEY
+from .config import BASE_URL, SECRET_KEY
 from .db import get_db
 from .models import Role, User
 
 SESSION_COOKIE = "ra_session"
 SESSION_MAX_AGE = 60 * 60 * 12
+CSRF_COOKIE = "ra_csrf"
+#: Only mark cookies "secure" when the app is actually served over HTTPS -
+#: otherwise a plain-HTTP install (every Windows demo) could never sign in.
+COOKIE_SECURE = BASE_URL.lower().startswith("https://")
 _serializer = URLSafeTimedSerializer(SECRET_KEY, salt="ra-session")
 _ITERATIONS = 120_000
 
@@ -46,6 +52,103 @@ def read_session(token: str):
         return None
 
 
+def set_session_cookie(response, user_id: int) -> None:
+    response.set_cookie(SESSION_COOKIE, make_session(user_id), httponly=True,
+                        samesite="lax", secure=COOKIE_SECURE, max_age=SESSION_MAX_AGE,
+                        path="/")
+
+
+# ------------------------------------------------------------------ where to go next
+def safe_next(target: str | None, fallback: str = "/") -> str:
+    """Only ever redirect inside this app.
+
+    ``?next=`` arrives from the sign-in link and from the 401 handler, so an
+    address typed there must not be able to bounce someone to another site
+    after they have signed in.
+    """
+    value = (target or "").strip()
+    if not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return fallback
+    return value
+
+
+# ------------------------------------------------------------------ CSRF
+def new_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def csrf_token_for(request: Request) -> str:
+    """The token this page should carry, reusing the one already in the browser."""
+    existing = request.cookies.get(CSRF_COOKIE, "")
+    return existing if len(existing) >= 20 else new_csrf_token()
+
+
+def set_csrf_cookie(response, token: str) -> None:
+    response.set_cookie(CSRF_COOKIE, token, httponly=True, samesite="lax",
+                        secure=COOKIE_SECURE, max_age=SESSION_MAX_AGE, path="/")
+
+
+_UNSAFE = ("POST", "PUT", "PATCH", "DELETE")
+
+
+async def csrf_protect(request: Request) -> None:
+    """Reject a form that did not come from a page this app rendered.
+
+    The token is written as an http-only cookie when a page is rendered and
+    repeated in a hidden field on every form (or the ``X-CSRF-Token`` header
+    for the few things JavaScript posts). Both have to match.
+    """
+    if request.method not in _UNSAFE:
+        return
+    cookie = request.cookies.get(CSRF_COOKIE, "")
+    submitted = request.headers.get("x-csrf-token", "")
+    if not submitted:
+        try:
+            form = await request.form()
+            submitted = str(form.get("csrf_token") or "")
+        except Exception:      # pragma: no cover - unparseable body
+            submitted = ""
+    if not cookie or not submitted or not hmac.compare_digest(cookie, submitted):
+        raise HTTPException(
+            status_code=403,
+            detail="This page had been open too long, or was opened from somewhere else, so "
+                   "we did not save it. Go back, reload the page and try again.")
+
+
+# ------------------------------------------------------------------ sign-in throttle
+_ATTEMPT_WINDOW = 15 * 60
+_MAX_ATTEMPTS = 10
+_attempts: dict[str, list[float]] = {}
+_attempts_lock = threading.Lock()
+
+
+def _prune(stamps: list[float], now: float) -> list[float]:
+    return [t for t in stamps if now - t < _ATTEMPT_WINDOW]
+
+
+def login_blocked(key: str) -> int:
+    """Seconds the caller must wait, or 0 when they may try again now."""
+    now = time.time()
+    with _attempts_lock:
+        stamps = _prune(_attempts.get(key, []), now)
+        _attempts[key] = stamps
+        if len(stamps) < _MAX_ATTEMPTS:
+            return 0
+        return max(1, int(_ATTEMPT_WINDOW - (now - stamps[0])))
+
+
+def note_failed_login(key: str) -> None:
+    now = time.time()
+    with _attempts_lock:
+        _attempts[key] = _prune(_attempts.get(key, []), now) + [now]
+
+
+def clear_failed_logins(key: str) -> None:
+    with _attempts_lock:
+        _attempts.pop(key, None)
+
+
+# ------------------------------------------------------------------ who is asking
 def current_user_optional(request: Request, db: Session = Depends(get_db)):
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
@@ -75,6 +178,5 @@ def require_roles(*roles: Role):
 
 
 buyer_only = require_roles(Role.BUYER, Role.ADMIN)
-buyer_side = require_roles(Role.BUYER, Role.ADMIN, Role.APPROVER)
+buyer_side = require_roles(Role.BUYER, Role.ADMIN)
 vendor_only = require_roles(Role.VENDOR)
-approver_only = require_roles(Role.APPROVER, Role.ADMIN)

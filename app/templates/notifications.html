@@ -3,7 +3,8 @@
 {% block content %}
 <div class="page-head"><div class="grow"><h1>Alerts</h1>
   <p class="sub">Everything the platform has told you. The same messages went to your email.</p></div>
-  <form method="post" action="/notifications/read-all"><button class="btn ghost" type="submit">Mark all as read</button></form>
+  <form method="post" action="/notifications/read-all">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost" type="submit">Mark all as read</button></form>
 </div>
 
 {% if rows %}

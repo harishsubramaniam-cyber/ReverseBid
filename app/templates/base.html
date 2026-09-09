@@ -49,8 +49,12 @@
     <svg><use href="#i-spark"/></svg><span class="label">Ask</span></button>
   <a class="iconbtn" href="/notifications" title="Alerts" aria-label="Alerts">
     <svg><use href="#i-bell"/></svg>{% if unread_count %}<span class="badge-dot">{{ unread_count }}</span>{% endif %}</a>
-  <a class="iconbtn" href="/logout" title="{{ user.name }} — sign out">
-    <span class="avatar">{{ user.name[0]|upper }}</span><svg><use href="#i-out"/></svg></a>
+  {# Signing out is a POST, so no other page can sign someone out with a link. #}
+  <form method="post" action="/logout" style="display:inline-flex">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="iconbtn" type="submit" title="{{ user.name }} — sign out">
+      <span class="avatar">{{ user.name[0]|upper }}</span><svg><use href="#i-out"/></svg></button>
+  </form>
 </header>
 {% endif %}
 
@@ -98,7 +102,8 @@
     <details class="qa"><summary>Decrement</summary><div class="a">How much lower each new bid has to be than the current best. It stops bidders shaving off one rupee at a time.</div></details>
     <details class="qa"><summary>L1, L2, L3</summary><div class="a">L1 is the lowest price right now — the winning position. L2 is second lowest, and so on.</div></details>
     <details class="qa"><summary>Auto-extension</summary><div class="a">A bid in the last moments pushes the clock back, so nobody wins by bidding at the buzzer.</div></details>
-    <details class="qa"><summary>Baseline &amp; savings</summary><div class="a">Baseline is quantity × starting price. Savings is baseline minus what you actually awarded. Where no starting price was set, the highest bid received stands in as the baseline.</div></details>
+    <details class="qa"><summary>Baseline &amp; savings</summary><div class="a">Baseline is quantity × starting price. Savings is baseline minus what you actually awarded — before you award, the best bids stand in. Where no starting price was set, the highest bid received is the baseline.</div></details>
+    <details class="qa"><summary>Who wins an item</summary><div class="a">One bidder per item, for the whole quantity. Different items can go to different bidders, or the lot to one — but an item is never split between two suppliers.</div></details>
   </div>
   <div class="foot"><button class="btn ghost block" onclick="closeDrawers();openDrawer('ask-drawer')">
     <svg><use href="#i-spark"/></svg>Still stuck? Ask the assistant</button></div>
@@ -113,12 +118,13 @@
     <div>
       <span class="chip" onclick="askThis('What is a reverse auction?')">What is a reverse auction?</span>
       <span class="chip" onclick="askThis('How do decrements work?')">How do decrements work?</span>
-      <span class="chip" onclick="askThis('How do I split an award?')">How do I split an award?</span>
+      <span class="chip" onclick="askThis('How do I choose who wins each item?')">How do I choose who wins?</span>
       <span class="chip" onclick="askThis('Why was my bid rejected?')">Why was my bid rejected?</span>
     </div>
   </div>
   <div class="foot">
-    <form id="ask-form" data-context="{{ help_key }}" class="price-input">
+    <form id="ask-form" data-context="{{ help_key }}" data-csrf="{{ csrf_token }}"
+          class="price-input">
       <input type="text" name="question" placeholder="Type your question…" autocomplete="off"
              aria-label="Your question">
       <button class="btn" type="submit">Ask</button>
