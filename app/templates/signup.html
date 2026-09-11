@@ -1,26 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Create an account — {{ app_name }}{% endblock %}
+{% block title %}Set up your organisation — {{ app_name }}{% endblock %}
 {% block content %}
 <div class="auth">
   <div class="card">
-    <h1>Create the first account</h1>
-    <p class="muted small">This is the buying account that runs the auctions. Everyone else —
-      your colleagues and your suppliers — arrives by invitation afterwards, so this page only
-      appears once.</p>
+    <h1>Set up your organisation</h1>
+    <p class="muted small">This creates your buying organisation and makes you its first
+      buyer. It is entirely your own — your suppliers, your items, your auctions, your
+      savings. Nobody outside it can see any of it.</p>
+    <p class="muted small">Your colleagues and your suppliers arrive by invitation afterwards,
+      so this page is the only one you need.</p>
     {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
     <form method="post" action="/signup">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field"><label for="name">Your name</label>
         <input id="name" name="name" value="{{ name or '' }}" required></div>
-      <div class="field"><label for="company">Your company <span class="muted small">(optional)</span></label>
-        <input id="company" name="company" value="{{ company or '' }}"></div>
+      <div class="field"><label for="company">Your organisation's name</label>
+        <input id="company" name="company" value="{{ company or '' }}" required>
+        <p class="hint">Your company, as your colleagues and suppliers will see it — it is on
+          every invitation you send.</p></div>
       <div class="field"><label for="email">Work email</label>
         <input id="email" type="email" name="email" value="{{ email or '' }}" required>
         <p class="hint">This is where auction alerts will go.</p></div>
       <div class="field"><label for="password">Password</label>
         <input id="password" type="password" name="password" minlength="6" required>
         <p class="hint">At least 6 characters.</p></div>
-      <button class="btn block" type="submit">Create account</button>
+      <button class="btn block" type="submit">Set up my organisation</button>
     </form>
     <p class="small muted" style="margin-top:14px;text-align:center">
       Already have one? <a href="/login">Sign in</a></p>

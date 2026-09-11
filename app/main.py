@@ -29,6 +29,10 @@ async def lifespan(app: FastAPI):
     # A demonstration deployment: if the database is empty, fill it with the
     # sample company so whoever opens the link has something to click. Real
     # installations never set this, and it does nothing once there is data.
+    adopted = migrate.adopt_into_one_organisation()
+    if adopted:
+        print(f"This installation predates organisations, so {adopted} "
+              "have been moved into one.")
     if config.DEMO_SEED:
         from .models import User as _User
         probe = SessionLocal()

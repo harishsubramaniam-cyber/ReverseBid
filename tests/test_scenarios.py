@@ -30,7 +30,7 @@ from app import engine as E                         # noqa: E402
 from app import mailer, reporting, scheduler        # noqa: E402
 from app.db import Base, SessionLocal, engine       # noqa: E402
 from app.main import app                            # noqa: E402
-from app.models import (Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,  # noqa: E402
+from app.models import (Organisation, Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,  # noqa: E402
                         Item, Participant, Role, Unit, User, Vendor)
 from app.security import hash_password              # noqa: E402
 

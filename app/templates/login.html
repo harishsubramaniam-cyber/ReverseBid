@@ -7,6 +7,27 @@
     <p class="muted small" style="margin-top:6px">Reverse auctions — you set the ceiling, suppliers bid it down.</p>
   </div>
   <div class="card">
+    {% if choices %}
+    {# The same address and password open an account with more than one buying
+       organisation - normal for a supplier who sells to several of them - so
+       ask which one rather than guessing and showing the wrong company. #}
+    <h1>Which organisation?</h1>
+    <p class="muted small">That email and password work for more than one. Pick the one you
+      want to sign in to — you can sign out and pick the other whenever you like.</p>
+    <form method="post" action="/login" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <input type="hidden" name="email" value="{{ email or '' }}">
+      <input type="hidden" name="password" value="{{ password or '' }}">
+      {% for org_id, org_name in choices %}
+      <button class="btn block {{ '' if loop.first else 'ghost' }}" style="margin-bottom:8px"
+              type="submit" name="chose" value="{{ org_id }}">{{ org_name }}</button>
+      {% endfor %}
+    </form>
+    <p class="small muted" style="margin-top:14px;text-align:center">
+      <a href="/login">Use a different email</a>
+    </p>
+    {% else %}
     <h1>Sign in</h1>
     {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
     {% if flash %}<div class="alert {{ flash.k }}">{{ flash.m }}</div>{% endif %}
@@ -20,8 +41,9 @@
       <button class="btn block" type="submit">Sign in</button>
     </form>
     <p class="small muted" style="margin-top:14px;text-align:center">
-      New here? <a href="/signup">Create an account</a>
+      New here? <a href="/signup">Set up your organisation</a>
     </p>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

@@ -41,12 +41,15 @@ def _html_to_text(html: str) -> str:
 
 def queue_email(db, *, to_email: str, subject: str, html_body: str, to_name: str = "",
                 event: str = "", auction_id: int | None = None,
-                text_body: str = "") -> EmailMessage:
-    """Persist the message and hand it to the background sender."""
+                text_body: str = "", org_id: int | None = None) -> EmailMessage:
+    """Persist the message and hand it to the background sender.
+
+    ``org_id`` is what keeps one buying organisation's Outbox to itself.
+    """
     msg = EmailMessage(
         to_email=to_email, to_name=to_name, subject=subject,
         html_body=html_body, text_body=text_body or _html_to_text(html_body),
-        event=event, auction_id=auction_id, status="queued",
+        event=event, auction_id=auction_id, org_id=org_id, status="queued",
     )
     db.add(msg)
     db.commit()
@@ -64,7 +67,7 @@ def _ensure_worker() -> None:
         _worker_started = True
 
 
-def requeue_pending(retry_failed: bool = True) -> int:
+def requeue_pending(retry_failed: bool = True, org_id: int | None = None) -> int:
     """Pick up anything left over from a previous run.
 
     The queue only ever lived in memory, so a message written just before the
@@ -75,9 +78,10 @@ def requeue_pending(retry_failed: bool = True) -> int:
     wanted = ["queued", "failed"] if retry_failed else ["queued"]
     db = SessionLocal()
     try:
-        rows = (db.query(EmailMessage.id)
-                  .filter(EmailMessage.status.in_(wanted))
-                  .order_by(EmailMessage.id.asc()).all())
+        query = db.query(EmailMessage.id).filter(EmailMessage.status.in_(wanted))
+        if org_id is not None:
+            query = query.filter(EmailMessage.org_id == org_id)
+        rows = query.order_by(EmailMessage.id.asc()).all()
     finally:
         db.close()
     if not rows:

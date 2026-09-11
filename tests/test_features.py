@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient           # noqa: E402
 from app import config, engine, mailer              # noqa: E402
 from app.db import Base, SessionLocal, engine as db_engine   # noqa: E402
 from app.main import app                            # noqa: E402
-from app.models import (Attachment, Auction, AuctionLine, AuctionStatus, Award, Bid,  # noqa: E402
+from app.models import (Organisation, Attachment, Auction, AuctionLine, AuctionStatus, Award, Bid,  # noqa: E402
                         DecrementType, EmailMessage, Item, Participant, Role, Unit,
                         User, Vendor)
 from app.security import hash_password, make_invite  # noqa: E402
@@ -93,7 +93,7 @@ def landed_auction(db, buyer, invited, item, unit, *, ceiling=100.0, qty=10.0,
     """An auction compared on the delivered price, with adders per bidder."""
     now = datetime.utcnow()
     a = Auction(reference=f"RA-F-{datetime.utcnow().timestamp():.6f}", title=title,
-                creator_id=buyer.id, status=AuctionStatus.LIVE,
+                creator_id=buyer.id, org_id=buyer.org_id, status=AuctionStatus.LIVE,
                 start_at=now - timedelta(minutes=5), end_at=now + timedelta(hours=2),
                 original_end_at=now + timedelta(hours=2),
                 decrement_type=DecrementType.ABSOLUTE, min_decrement=min_dec,
@@ -122,19 +122,22 @@ def bid(client, auction, line, price):
 
 def main() -> int:                                                      # noqa: C901
     db = SessionLocal()
-    buyer = User(name="Buyer One", email="buyer@f.local", role=Role.BUYER,
+    org = Organisation(name="Test Organisation")
+    db.add(org)
+    db.flush()
+    buyer = User(name="Buyer One", email="buyer@f.local", role=Role.BUYER, org_id=org.id,
                  password_hash=hash_password(PW))
     db.add(buyer)
-    unit = Unit(code="NOS")
-    item = Item(name="Widget")
+    unit = Unit(code="NOS", org_id=org.id)
+    item = Item(name="Widget", org_id=org.id)
     db.add_all([unit, item])
     db.flush()
     vendors, clients = [], {}
     for i in (1, 2, 3):
-        v = Vendor(name=f"Acme {i}", email=f"v{i}@f.local")
+        v = Vendor(name=f"Acme {i}", email=f"v{i}@f.local", org_id=org.id)
         db.add(v)
         db.flush()
-        db.add(User(name=f"Bidder {i}", email=f"v{i}@f.local", role=Role.VENDOR,
+        db.add(User(name=f"Bidder {i}", email=f"v{i}@f.local", role=Role.VENDOR, org_id=org.id,
                     vendor_id=v.id, password_hash=hash_password(PW)))
         vendors.append(v)
     db.commit()
@@ -394,18 +397,25 @@ def main() -> int:                                                      # noqa: 
           b.get(f"/auctions/{doc_auction.id}/documents/999999").status_code == 404)
 
     # ================================================================== 11
-    print("\n11. Nobody signs themselves up as a supplier")
+    print("\n11. Sign-up starts an organisation; suppliers still arrive by invitation")
     fresh = Client(app, base_url="http://test", headers=BROWSER)
+    fresh.get("/login")
     page = fresh.get("/signup")
-    check("signup is closed once an account exists",
-          page.status_code == 200 and "by invitation" in page.text)
-    r = fresh.post("/signup", data={"name": "Sneaky", "email": "sneaky@x.example",
-                                    "password": "abcdef", "account_type": "vendor"})
-    check("...and posting to it anyway is refused",
-          r.status_code == 403 and db.query(User).filter_by(email="sneaky@x.example")
-          .first() is None, str(r.status_code))
-    check("the page says how a supplier really gets in",
-          "invites you to an auction" in page.text or "invitation email" in page.text)
+    check("anyone can start a buying organisation",
+          page.status_code == 200 and "organisation" in page.text.lower(),
+          f"HTTP {page.status_code}")
+    r = fresh.post("/signup", follow_redirects=False,
+                   data={"name": "Sneaky", "email": "sneaky@x.example",
+                         "password": "abcdef1", "company": "Sneaky Ltd"})
+    db.expire_all()
+    made = db.query(User).filter_by(email="sneaky@x.example").first()
+    check("...and what they get is a buyer in an organisation of their own",
+          made is not None and made.role == Role.BUYER and made.org_id not in (None, org.id),
+          f"HTTP {r.status_code}")
+    check("...which cannot see this organisation's suppliers",
+          "Acme 1" not in fresh.get("/masters").text)
+    check("a supplier account is still not something you can create here",
+          "vendor" not in page.text.lower() or "invitation" in page.text.lower())
 
     print("\n12. An invited supplier can always get in and bid")
     # exactly what a buyer does: add a vendor with a name and an email
@@ -463,10 +473,10 @@ def main() -> int:                                                      # noqa: 
     r = used.get("/join/not-a-real-token")
     check("a made-up link is refused, kindly",
           r.status_code == 400 and "expired or is not valid" in r.text)
-    forged = make_invite("outsider@x.example", "buyer", None)
+    forged = make_invite("outsider@x.example", "buyer", None, org_id=org.id)
     check("a token this app signed for a buyer cannot claim a vendor",
           "/join/" and used.get(f"/join/{forged}").status_code == 200)
-    other = make_invite("stranger@x.example", "vendor", 999999)
+    other = make_invite("stranger@x.example", "vendor", 999999, org_id=org.id)
     r = used.get(f"/join/{other}")
     check("a token for a vendor that no longer exists is refused",
           r.status_code == 400 and "no longer on the system" in r.text)

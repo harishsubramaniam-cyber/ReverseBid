@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient           # noqa: E402
 from app import engine, mailer, migrate, notify, reporting, scheduler  # noqa: E402
 from app.db import Base, SessionLocal, engine as db_engine             # noqa: E402
 from app.main import app                            # noqa: E402
-from app.models import (Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,  # noqa: E402
+from app.models import (Organisation, Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,  # noqa: E402
                         EmailMessage, Item, Participant, Role, Unit, User, Vendor)
 from app.security import hash_password              # noqa: E402
 from app.utils import TZ              # noqa: E402
@@ -93,7 +93,7 @@ def make_auction(db, buyer, vendors, item, unit, *, status=AuctionStatus.LIVE, c
                  decrement_type=DecrementType.ABSOLUTE, title="Regress", published=True):
     now = datetime.utcnow()
     a = Auction(reference=f"RA-R-{datetime.utcnow().timestamp():.6f}", title=title,
-                creator_id=buyer.id, status=status,
+                creator_id=buyer.id, org_id=buyer.org_id, status=status,
                 start_at=now - timedelta(minutes=5), end_at=now + timedelta(minutes=minutes),
                 original_end_at=now + timedelta(minutes=minutes),
                 decrement_type=decrement_type, min_decrement=min_dec, max_decrement=max_dec,
@@ -118,20 +118,23 @@ def bid_as(client, auction, line, price):
 
 def main() -> int:                                                       # noqa: C901
     db = SessionLocal()
-    buyer = User(name="Buyer One", email="buyer@r.local", role=Role.BUYER,
+    org = Organisation(name="Test Organisation")
+    db.add(org)
+    db.flush()
+    buyer = User(name="Buyer One", email="buyer@r.local", role=Role.BUYER, org_id=org.id,
                  password_hash=hash_password(PW))
     db.add(buyer)
-    unit = Unit(code="NOS")
-    item = Item(name="Widget")
-    spare_item = Item(name="Spare widget")
+    unit = Unit(code="NOS", org_id=org.id)
+    item = Item(name="Widget", org_id=org.id)
+    spare_item = Item(name="Spare widget", org_id=org.id)
     db.add_all([unit, item, spare_item])
     db.flush()
     vendors = []
     for i in (1, 2, 3):
-        v = Vendor(name=f"Acme {i}", email=f"v{i}@r.local")
+        v = Vendor(name=f"Acme {i}", email=f"v{i}@r.local", org_id=org.id)
         db.add(v)
         db.flush()
-        db.add(User(name=f"Bidder {i}", email=f"v{i}@r.local", role=Role.VENDOR,
+        db.add(User(name=f"Bidder {i}", email=f"v{i}@r.local", role=Role.VENDOR, org_id=org.id,
                     vendor_id=v.id, password_hash=hash_password(PW)))
         vendors.append(v)
     db.commit()
@@ -444,7 +447,7 @@ def main() -> int:                                                       # noqa:
     award = db.query(Award).filter(Award.line_id == line_a.id).first()
     check("a negotiated price is not passed off as a bid", award.bid_id is None
           and award.unit_price == 870.0)
-    stranger = Vendor(name="Never Invited Ltd", email="stranger@r.local")
+    stranger = Vendor(name="Never Invited Ltd", email="stranger@r.local", org_id=org.id)
     db.add(stranger)
     db.commit()
     r = b.post(f"/auctions/{closing.id}/award", follow_redirects=False,
@@ -500,8 +503,10 @@ def main() -> int:                                                       # noqa:
                  vendor_id=vendors[0].id, qty=spanning.lines[0].qty, unit_price=90.0,
                  total=900.0, awarded_by_id=buyer.id, awarded_at=spanning.awarded_at))
     db.commit()
-    jan = reporting.total_savings(db, datetime(2026, 1, 1), datetime(2026, 1, 31, 23, 59))
-    feb = reporting.total_savings(db, datetime(2026, 2, 1), datetime(2026, 2, 28, 23, 59))
+    jan = reporting.total_savings(db, datetime(2026, 1, 1), datetime(2026, 1, 31, 23, 59),
+                                  org_id=buyer.org_id)
+    feb = reporting.total_savings(db, datetime(2026, 2, 1), datetime(2026, 2, 28, 23, 59),
+                                  org_id=buyer.org_id)
     refs_jan = [row["reference"] for row in jan["rows"]]
     refs_feb = [row["reference"] for row in feb["rows"]]
     check("it is not in the month bidding opened",
@@ -642,18 +647,17 @@ def main() -> int:                                                       # noqa:
     # suppliers arrive by invitation, so the bug has no surface left.
     s = Client(app, base_url="http://test", headers=BROWSER)
     page = s.get("/signup")
-    check("signup is closed once the first account exists",
-          "by invitation" in page.text and "account_type" not in page.text)
+    check("sign-up now offers to start an organisation",
+          "organisation" in page.text.lower() and "account_type" not in page.text)
     r = s.post("/signup", data={"name": "Asha Rao", "email": "asha@supplier.co",
-                                "password": "abcdef", "account_type": "vendor",
+                                "password": "abcdef1", "account_type": "vendor",
                                 "company": "Rao Packaging Pvt Ltd"},
                follow_redirects=False)
     db.expire_all()
-    sneaked = db.query(User).filter_by(email="asha@supplier.co").first()
-    check("...and no account can be created through it", r.status_code == 403
-          and sneaked is None, str(r.status_code))
-    check("the page tells a supplier how they really get in",
-          "invites you to an auction" in page.text)
+    made = db.query(User).filter_by(email="asha@supplier.co").first()
+    check("...and what it creates is a buyer with their own organisation, never a supplier",
+          made is not None and made.role == Role.BUYER
+          and made.org_id not in (None, buyer.org_id), str(r.status_code))
 
     # ------------------------------------------------------------------ 29
     print("\n29. Numbers nobody means are refused, not crashed on")
@@ -910,7 +914,8 @@ def main() -> int:                                                       # noqa:
     b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
            data={f"winner_{line.id}": str(vendors[0].id), f"price_{line.id}": "548.18"})
     db.expire_all()
-    data = reporting.total_savings(db, datetime(2000, 1, 1), datetime(2100, 1, 1))
+    data = reporting.total_savings(db, datetime(2000, 1, 1), datetime(2100, 1, 1),
+                                   org_id=buyer.org_id)
     row = next((r for r in data["rows"] if r["reference"] == auction.reference), None)
     check("the row is in the report", row is not None)
     if row:
@@ -938,7 +943,7 @@ def main() -> int:                                                       # noqa:
     award.awarded_at = auction.awarded_at = local_first.astimezone(
         timezone.utc).replace(tzinfo=None)
     db.commit()
-    buckets = _monthly_savings(db, months=6)
+    buckets = _monthly_savings(db, buyer.org_id, months=6)
     this_month = datetime.now(TZ).strftime("%b")
     landed = next((x for x in buckets if x["label"] == this_month), None)
     check("the chart has a bar for the current month", landed is not None,
@@ -1066,23 +1071,29 @@ def main() -> int:                                                       # noqa:
           told(r)[:60])
 
     # ------------------------------------------------------------------ 47
-    print("\n47. Only one account can ever be the first")
-    import threading as _threading
-    from app.db import SessionLocal as _Session
-    probe = _Session()
-    existing = probe.query(User).count()
-    probe.close()
-    check("this install already has accounts, so sign-up is shut", existing > 0, str(existing))
-    fresh = Client(app, base_url="http://test")
-    fresh.headers.update(BROWSER)
-    fresh.get("/signup")
-    r = fresh.post("/signup", follow_redirects=False,
-                   data={"name": "Interloper", "email": "nope@r.local",
-                         "password": "abcdef123", "company": ""})
+    print("\n47. Anyone may start their own organisation")
+    # This replaces the old "only the very first account" rule: a deployment
+    # is no longer one company, so sign-up is open and each new account gets
+    # an organisation of its own, walled off from every other.
+    outsider = Client(app, base_url="http://test")
+    outsider.headers.update(BROWSER)
+    outsider.get("/signup")
+    r = outsider.post("/signup", follow_redirects=False,
+                      data={"name": "Newcomer", "email": "new@elsewhere.local",
+                            "password": "abcdef123", "company": "Elsewhere Ltd"})
+    check("a second organisation can sign up", r.status_code in (302, 303),
+          f"HTTP {r.status_code}")
     db.expire_all()
-    check("a second sign-up is refused", r.status_code == 403, f"HTTP {r.status_code}")
-    check("...and no account was made",
-          db.query(User).filter(User.email == "nope@r.local").first() is None)
+    made = db.query(User).filter(User.email == "new@elsewhere.local").one()
+    check("...with an organisation of its own", made.org_id not in (None, buyer.org_id),
+          f"{made.org_id} vs {buyer.org_id}")
+    check("...and it cannot see this one's auctions",
+          "Widget" not in outsider.get("/auctions").text)
+    r = outsider.post("/signup", follow_redirects=False,
+                      data={"name": "No Company", "email": "x@elsewhere.local",
+                            "password": "abcdef123", "company": ""})
+    check("an organisation without a name is refused",
+          db.query(User).filter(User.email == "x@elsewhere.local").first() is None)
 
     # ------------------------------------------------------------------ 48
     print("\n48. The sign-in throttle cannot be sidestepped with a header")

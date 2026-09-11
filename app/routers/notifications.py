@@ -35,7 +35,7 @@ def read_all(user: User = Depends(current_user), db: Session = Depends(get_db)):
 @router.get("/outbox")
 def outbox(request: Request, q: str = "", user: User = Depends(buyer_side),
            db: Session = Depends(get_db)):
-    query = db.query(EmailMessage)
+    query = db.query(EmailMessage).filter(EmailMessage.org_id == user.org_id)
     if q:
         like = f"%{q}%"
         query = query.filter(EmailMessage.subject.ilike(like) |
@@ -44,9 +44,11 @@ def outbox(request: Request, q: str = "", user: User = Depends(buyer_side),
     return render(request, "outbox.html",
                   {"rows": rows, "q": q, "mail": mailer.settings_summary(),
                    "waiting": db.query(EmailMessage).filter(
-                       EmailMessage.status == "queued").count(),
+                       EmailMessage.status == "queued",
+                       EmailMessage.org_id == user.org_id).count(),
                    "stuck": db.query(EmailMessage).filter(
-                       EmailMessage.status == "failed").count()},
+                       EmailMessage.status == "failed",
+                       EmailMessage.org_id == user.org_id).count()},
                   user=user, db=db, help_key="outbox")
 
 
@@ -70,7 +72,7 @@ def outbox_test(request: Request, to_email: str = Form(""),
 @router.post("/outbox/retry")
 def outbox_retry(user: User = Depends(buyer_side), db: Session = Depends(get_db)):
     """Try everything queued or failed again, without a restart."""
-    count = mailer.requeue_pending()
+    count = mailer.requeue_pending(org_id=user.org_id)
     if not count:
         return redirect("/outbox", "Nothing is waiting — every message has been dealt with.")
     return redirect("/outbox", f"Trying {count} message(s) again. Reload in a few seconds to "
@@ -81,6 +83,8 @@ def outbox_retry(user: User = Depends(buyer_side), db: Session = Depends(get_db)
 def outbox_detail(message_id: int, request: Request, user: User = Depends(buyer_side),
                   db: Session = Depends(get_db)):
     message = db.get(EmailMessage, message_id)
+    if message is not None and message.org_id != user.org_id:
+        message = None      # another organisation's correspondence
     if not message:
         raise HTTPException(404, "That email is not in the outbox.")
     return render(request, "outbox_detail.html", {"m": message}, user=user, db=db,
@@ -96,6 +100,8 @@ def outbox_raw(message_id: int, user: User = Depends(buyer_side),
     than the email - the whole point of the Outbox is seeing what went out.
     """
     message = db.get(EmailMessage, message_id)
+    if message is not None and message.org_id != user.org_id:
+        message = None      # another organisation's correspondence
     if not message:
         raise HTTPException(404, "That email is not in the outbox.")
     return HTMLResponse(message.html_body)

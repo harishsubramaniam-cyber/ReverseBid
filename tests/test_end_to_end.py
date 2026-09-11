@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient           # noqa: E402
 from app import mailer, scheduler                   # noqa: E402
 from app.db import Base, SessionLocal, engine       # noqa: E402
 from app.main import app                            # noqa: E402
-from app.models import (Auction, AuctionStatus, Award, Bid, EmailMessage, Item, Role,  # noqa: E402
+from app.models import (Organisation, Auction, AuctionStatus, Award, Bid, EmailMessage, Item, Role,  # noqa: E402
                         Unit, User, Vendor)
 from app.security import hash_password              # noqa: E402
 

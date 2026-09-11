@@ -39,8 +39,8 @@ def run(page, base, watch):                                       # noqa: C901
     page.goto(base + "/signup")
     page.wait_for_timeout(200)
     watch.note_page(page, "signup")
-    check("the first-run signup page is the real one, not the closed one",
-          "first account" in page.locator("h1").first.inner_text().lower(),
+    check("the signup page offers to set up an organisation",
+          "organisation" in page.locator("h1").first.inner_text().lower(),
           page.locator("h1").first.inner_text())
     check("it explains that everyone else arrives by invitation",
           "invitation" in page.content())

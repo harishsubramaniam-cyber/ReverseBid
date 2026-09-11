@@ -16,6 +16,7 @@ jobs:
       - run: python tests/test_scenarios.py
       - run: pip install aiosmtpd
       - run: python tests/test_email.py
+      - run: python tests/test_organisations.py
 
   journeys:
     # The same screens a person actually uses, driven in a real browser.

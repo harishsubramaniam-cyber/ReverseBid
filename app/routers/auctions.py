@@ -31,17 +31,24 @@ OPEN_TO_VENDOR = (AuctionStatus.SCHEDULED, AuctionStatus.LIVE, AuctionStatus.CLO
 
 
 # ------------------------------------------------------------------ helpers
-def next_reference(db: Session) -> str:
+def next_reference(db: Session, org_id: int | None) -> str:
     year = datetime.utcnow().year
-    count = db.query(Auction).count() + 1
-    while db.query(Auction).filter(Auction.reference == f"RA-{year}-{count:04d}").first():
+    count = db.query(Auction).filter(Auction.org_id == org_id).count() + 1
+    while db.query(Auction).filter(Auction.reference == f"RA-{year}-{count:04d}",
+                                   Auction.org_id == org_id).first():
         count += 1
     return f"RA-{year}-{count:04d}"
 
 
 def visible_auction(db: Session, auction_id: int, user: User) -> Auction:
+    """The one gate every screen that opens an auction goes through.
+
+    An auction belongs to one buying organisation. Nobody outside it has any
+    business knowing it exists, so this answers "does not exist" rather than
+    "not allowed" - a 403 would confirm the id is real.
+    """
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     if user.is_buyer_side:
         return auction
@@ -63,7 +70,7 @@ def _whole_number(raw: str, label: str, field: str) -> int | None:
     return int(raw)
 
 
-def parse_lines(form, db: Session) -> list[dict]:
+def parse_lines(form, db: Session, org_id: int | None) -> list[dict]:
     """Read the item rows. The starting price is optional; everything else is not."""
     items = form.getlist("line_item_id")
     units = form.getlist("line_unit_id")
@@ -109,12 +116,17 @@ def parse_lines(form, db: Session) -> list[dict]:
             price = round(price, 2)
         item_key = _whole_number(item_id, f"The item on row {position}", "line_item_id")
         item = db.get(Item, item_key) if item_key else None
+        # Only this organisation's items: a tampered dropdown must not be able
+        # to pull another company's item onto this auction.
+        if item is not None and item.org_id != org_id:
+            item = None
         if not item:
             raise FormError(f"Item {position} no longer exists. Pick a different one.",
                             "line_item_id")
         unit_key = _whole_number(units[index] if index < len(units) else "",
                                  f"The unit on row {position}", "line_unit_id")
-        if unit_key and not db.get(Unit, unit_key):
+        unit = db.get(Unit, unit_key) if unit_key else None
+        if unit_key and (unit is None or unit.org_id != org_id):
             raise FormError(f"Item {position}: that unit no longer exists. Pick another.",
                             "line_unit_id")
         rows.append({"item_id": item.id, "unit_id": unit_key,
@@ -126,15 +138,16 @@ def parse_lines(form, db: Session) -> list[dict]:
     return rows
 
 
-def form_context(db: Session, auction: Auction | None = None) -> dict:
+def form_context(db: Session, org_id: int | None, auction: Auction | None = None) -> dict:
     """The pickers on the auction form.
 
     Archived vendors and items are hidden - except any this auction already
     uses. Leaving them out meant the browser could not post them back, so
     saving an unrelated change quietly uninvited a bidder or deleted a line.
     """
-    items = db.query(Item).filter(Item.is_active.is_(True)).order_by(Item.name).all()
-    vendors = (db.query(Vendor).filter(Vendor.is_active.is_(True))
+    items = (db.query(Item).filter(Item.is_active.is_(True), Item.org_id == org_id)
+               .order_by(Item.name).all())
+    vendors = (db.query(Vendor).filter(Vendor.is_active.is_(True), Vendor.org_id == org_id)
                  .order_by(Vendor.name).all())
     if auction is not None:
         have_items = {item.id for item in items}
@@ -151,7 +164,7 @@ def form_context(db: Session, auction: Auction | None = None) -> dict:
         vendors.sort(key=lambda vendor: vendor.name.lower())
     return {
         "items": items,
-        "units": db.query(Unit).order_by(Unit.code).all(),
+        "units": db.query(Unit).filter(Unit.org_id == org_id).order_by(Unit.code).all(),
         "vendors": vendors,
     }
 
@@ -160,7 +173,7 @@ def form_context(db: Session, auction: Auction | None = None) -> dict:
 @router.get("")
 def list_auctions(request: Request, status: str = "", q: str = "",
                   user: User = Depends(current_user), db: Session = Depends(get_db)):
-    query = db.query(Auction)
+    query = db.query(Auction).filter(Auction.org_id == user.org_id)
     if user.is_vendor:
         query = (query.join(Participant, Participant.auction_id == Auction.id)
                       .filter(Participant.vendor_id == user.vendor_id,
@@ -235,7 +248,7 @@ def _prefill(form) -> dict:
 def _form_screen(request: Request, db: Session, user: User, auction: Auction | None,
                  *, error: FormError | None = None, form=None):
     """The create/edit screen, with an error banner and the typed values kept."""
-    context = form_context(db, auction)
+    context = form_context(db, user.org_id, auction)
     start = datetime.utcnow() + timedelta(hours=1)
     context.update({
         "auction": auction,
@@ -267,10 +280,11 @@ async def create_auction(request: Request, user: User = Depends(buyer_only),
         title = (form.get("title") or "").strip()
         if not title:
             raise FormError("Give the auction a title, so bidders know what it is for.", "title")
-        auction = Auction(reference=next_reference(db), creator_id=user.id, title=title,
+        auction = Auction(reference=next_reference(db, user.org_id), creator_id=user.id,
+                          org_id=user.org_id, title=title,
                           description=form.get("description", ""), terms=form.get("terms", ""))
         _apply_settings(auction, form)
-        lines = parse_lines(form, db)
+        lines = parse_lines(form, db, user.org_id)
         db.add(auction)
         db.flush()
         for row in lines:
@@ -392,7 +406,11 @@ def _sync_participants(db: Session, auction: Auction, form) -> list[Vendor]:
         vendor_id = _whole_number(raw, "One of the ticked bidders", "vendor_ids")
         if vendor_id is None:
             continue
-        if not db.get(Vendor, vendor_id):
+        candidate = db.get(Vendor, vendor_id)
+        # Same again for the bidder list, and this one matters more: an
+        # unchecked id here would put another company's supplier - name,
+        # address and all - onto this auction.
+        if not candidate or candidate.org_id != auction.org_id:
             raise FormError("One of the ticked bidders no longer exists. Reload the page and "
                             "choose again.", "vendor_ids")
         wanted.add(vendor_id)
@@ -469,9 +487,9 @@ def _apply_adders(db: Session, part: Participant, form, is_new: bool) -> None:
 
 
 # ------------------------------------------------------------------ edit
-def _editable_auction(db: Session, auction_id: int) -> Auction:
+def _editable_auction(db: Session, auction_id: int, user: User) -> Auction:
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist. It may have been deleted.")
     if not auction.editable:
         raise ActionError("Bidding has already started, so the auction can no longer be "
@@ -483,7 +501,7 @@ def _editable_auction(db: Session, auction_id: int) -> Auction:
 def edit_auction(auction_id: int, request: Request, user: User = Depends(buyer_only),
                  db: Session = Depends(get_db)):
     try:
-        auction = _editable_auction(db, auction_id)
+        auction = _editable_auction(db, auction_id, user)
     except ActionError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
     return _form_screen(request, db, user, auction)
@@ -493,7 +511,7 @@ def edit_auction(auction_id: int, request: Request, user: User = Depends(buyer_o
 async def update_auction(auction_id: int, request: Request, user: User = Depends(buyer_only),
                          db: Session = Depends(get_db)):
     try:
-        auction = _editable_auction(db, auction_id)
+        auction = _editable_auction(db, auction_id, user)
     except ActionError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
     form = await request.form()
@@ -516,7 +534,7 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
         auction.description = form.get("description", "")
         auction.terms = form.get("terms", "")
         _apply_settings(auction, form)
-        rows = parse_lines(form, db)
+        rows = parse_lines(form, db, user.org_id)
         for line in list(auction.lines):
             db.delete(line)
         db.flush()
@@ -648,7 +666,7 @@ def _publish_now(db: Session, auction: Auction, user: User, request: Request,
 def publish(auction_id: int, request: Request, start_now: str = Form(""),
             user: User = Depends(buyer_only), db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist. It may have been deleted.")
     try:
         message = _publish_now(db, auction, user, request, start_now == "on")
@@ -662,7 +680,7 @@ def go_live(auction_id: int, request: Request, user: User = Depends(buyer_only),
             db: Session = Depends(get_db)):
     """Open a scheduled auction ahead of its start time."""
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     if auction.status != AuctionStatus.SCHEDULED:
         return redirect(f"/auctions/{auction.id}",
@@ -686,7 +704,7 @@ def go_live(auction_id: int, request: Request, user: User = Depends(buyer_only),
 def cancel(auction_id: int, request: Request, reason: str = Form(""),
            user: User = Depends(buyer_only), db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     if auction.status in (AuctionStatus.AWARDED, AuctionStatus.CANCELLED):
         return redirect(f"/auctions/{auction.id}",
@@ -715,7 +733,7 @@ def cancel(auction_id: int, request: Request, reason: str = Form(""),
 def close_now(auction_id: int, request: Request, user: User = Depends(buyer_only),
               db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     if auction.status != AuctionStatus.LIVE:
         return redirect(f"/auctions/{auction.id}",
@@ -740,7 +758,7 @@ async def give_more_time(auction_id: int, request: Request, end_at: str = Form("
     Close button is for, and everyone is told either way.
     """
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     back = f"/auctions/{auction.id}"
     if auction.status != AuctionStatus.LIVE:

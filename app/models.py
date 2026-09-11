@@ -44,10 +44,36 @@ class DecrementType(str, enum.Enum):
 
 
 # --------------------------------------------------------------------------- masters
+class Organisation(Base):
+    """One buying organisation, and everything that belongs to it.
+
+    The platform used to be one company per installation: the first account
+    owned the whole thing and sign-up closed behind it. An organisation is
+    that same idea made into a row, so several buying companies can each run
+    their own auctions on one deployment without ever seeing each other.
+
+    Everything a buyer creates hangs off this: their colleagues, their
+    supplier list, their items and units, their auctions - and, through the
+    auctions, every bid, award, message and document. Supplier logins belong
+    to it too, so a supplier who sells to two of these companies has an
+    account with each, exactly as they have a separate account with each
+    customer's own portal today.
+    """
+    __tablename__ = "organisations"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
+    #: An address identifies a person *within* one organisation. The same
+    #: person may hold an account with several buying organisations - a
+    #: supplier usually will - and each is a separate login.
+    __table_args__ = (UniqueConstraint("org_id", "email", name="uq_user_org_email"),)
     id = Column(Integer, primary_key=True)
-    email = Column(String(200), unique=True, nullable=False, index=True)
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
+    email = Column(String(200), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     password_hash = Column(String(300), nullable=False)
     role = Column(Enum(Role), nullable=False, default=Role.BUYER)
@@ -58,6 +84,7 @@ class User(Base):
     created_at = Column(DateTime, default=utcnow)
 
     vendor = relationship("Vendor", back_populates="users", foreign_keys=[vendor_id])
+    org = relationship("Organisation")
 
     @property
     def is_vendor(self) -> bool:
@@ -72,6 +99,7 @@ class Vendor(Base):
     """Vendor master. Only name + email are mandatory - deliberately lighter."""
     __tablename__ = "vendors"
     id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
     name = Column(String(200), nullable=False)              # mandatory
     email = Column(String(200), nullable=False)             # mandatory
     code = Column(String(50), default="")
@@ -112,7 +140,8 @@ class Unit(Base):
     """Unit of measure master. Only code is mandatory."""
     __tablename__ = "units"
     id = Column(Integer, primary_key=True)
-    code = Column(String(30), unique=True, nullable=False)  # mandatory
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
+    code = Column(String(30), nullable=False)               # mandatory, per org
     name = Column(String(120), default="")
     created_at = Column(DateTime, default=utcnow)
 
@@ -121,6 +150,7 @@ class Item(Base):
     """Item master. Only name is mandatory."""
     __tablename__ = "items"
     id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
     name = Column(String(250), nullable=False)              # mandatory
     code = Column(String(60), default="")
     description = Column(Text, default="")
@@ -136,8 +166,13 @@ class Item(Base):
 # --------------------------------------------------------------------------- auction
 class Auction(Base):
     __tablename__ = "auctions"
+    __table_args__ = (UniqueConstraint("org_id", "reference", name="uq_auction_org_ref"),)
     id = Column(Integer, primary_key=True)
-    reference = Column(String(40), unique=True, index=True)
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
+    #: Unique inside the organisation that owns it, not across the platform:
+    #: each buyer's numbering starts at their own first auction, so nobody can
+    #: infer how much business anybody else is doing from a reference number.
+    reference = Column(String(40), index=True)
     title = Column(String(250), nullable=False)
     description = Column(Text, default="")
     terms = Column(Text, default="")
@@ -396,6 +431,7 @@ class Notification(Base):
 class EmailMessage(Base):
     __tablename__ = "email_messages"
     id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
     to_email = Column(String(250), nullable=False, index=True)
     to_name = Column(String(200), default="")
     subject = Column(String(400), nullable=False)

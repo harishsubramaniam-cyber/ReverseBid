@@ -27,7 +27,8 @@ def home(request: Request, user: User = Depends(current_user), db: Session = Dep
 
 
 def _buyer_home(request: Request, user: User, db: Session):
-    auctions = db.query(Auction).order_by(Auction.start_at.desc()).all()
+    auctions = (db.query(Auction).filter(Auction.org_id == user.org_id)
+                  .order_by(Auction.start_at.desc()).all())
     summaries = [engine.auction_summary(db, a) for a in auctions
                  if a.status in (AuctionStatus.CLOSED, AuctionStatus.AWARDED)]
     awarded = [s for s in summaries if s["auction"].status == AuctionStatus.AWARDED]
@@ -44,10 +45,13 @@ def _buyer_home(request: Request, user: User, db: Session):
         "scheduled": sum(1 for a in auctions if a.status == AuctionStatus.SCHEDULED),
         "awaiting_award": sum(1 for a in auctions if a.status == AuctionStatus.CLOSED),
         "total": len(auctions),
-        "bids": db.query(Bid).filter(Bid.withdrawn.is_(False)).count(),
-        "vendors": db.query(Vendor).filter(Vendor.is_active.is_(True)).count(),
+        "bids": (db.query(Bid).join(Auction, Auction.id == Bid.auction_id)
+                   .filter(Bid.withdrawn.is_(False),
+                           Auction.org_id == user.org_id).count()),
+        "vendors": db.query(Vendor).filter(Vendor.is_active.is_(True),
+                                           Vendor.org_id == user.org_id).count(),
     }
-    trend = _monthly_savings(db, months=6)
+    trend = _monthly_savings(db, user.org_id, months=6)
     live = [a for a in auctions if a.status in (AuctionStatus.LIVE, AuctionStatus.SCHEDULED)]
     closing = sorted([a for a in auctions if a.status == AuctionStatus.LIVE],
                      key=lambda a: a.end_at)[:5]
@@ -65,7 +69,7 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _monthly_savings(db: Session, months: int = 6):
+def _monthly_savings(db: Session, org_id: int | None, months: int = 6):
     first = datetime.now(TZ).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     starts = [first]
     for _ in range(months - 1):
@@ -73,7 +77,8 @@ def _monthly_savings(db: Session, months: int = 6):
     buckets = []
     for start in reversed(starts):
         end = (start + timedelta(days=32)).replace(day=1)
-        rows = (db.query(Auction).filter(Auction.status == AuctionStatus.AWARDED,
+        rows = (db.query(Auction).filter(Auction.org_id == org_id,
+                                         Auction.status == AuctionStatus.AWARDED,
                                          Auction.awarded_at >= _naive_utc(start),
                                          Auction.awarded_at < _naive_utc(end)).all())
         total = sum(engine.auction_summary(db, a)["savings"] for a in rows)
@@ -86,7 +91,8 @@ def _vendor_home(request: Request, user: User, db: Session):
     # filter a draft the buyer had not published yet showed up here - title,
     # dates and all - and then refused to open.
     auctions = (db.query(Auction).join(Participant, Participant.auction_id == Auction.id)
-                  .filter(Participant.vendor_id == user.vendor_id,
+                  .filter(Auction.org_id == user.org_id,
+                          Participant.vendor_id == user.vendor_id,
                           Auction.status.in_(VENDOR_VISIBLE))
                   .order_by(Auction.start_at.desc()).all())
     live, upcoming, finished = [], [], []
@@ -101,13 +107,16 @@ def _vendor_home(request: Request, user: User, db: Session):
             upcoming.append(row)
         else:
             finished.append(row)
-    wins = db.query(Award).filter(Award.vendor_id == user.vendor_id).all()
+    wins = (db.query(Award).join(Auction, Auction.id == Award.auction_id)
+              .filter(Award.vendor_id == user.vendor_id,
+                      Auction.org_id == user.org_id).all())
     metrics = {
         "live": len(live), "upcoming": len(upcoming),
         "won_value": sum(a.total for a in wins), "won_lines": len(wins),
         "l1_now": sum(1 for row in live if row["best_rank"] == 1),
-        "bids": db.query(Bid).filter(Bid.vendor_id == user.vendor_id,
-                                     Bid.withdrawn.is_(False)).count(),
+        "bids": (db.query(Bid).join(Auction, Auction.id == Bid.auction_id)
+                   .filter(Bid.vendor_id == user.vendor_id, Bid.withdrawn.is_(False),
+                           Auction.org_id == user.org_id).count()),
     }
     return render(request, "dashboard_vendor.html",
                   {"metrics": metrics, "live": live, "upcoming": upcoming,

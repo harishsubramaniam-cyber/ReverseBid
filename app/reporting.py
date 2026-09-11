@@ -70,7 +70,7 @@ DECISION_DATE = func.coalesce(Auction.awarded_at, Auction.closed_at, Auction.sta
 
 # ------------------------------------------------------------------ data
 def total_savings(db: Session, start: datetime, end: datetime,
-                  statuses=(AuctionStatus.AWARDED,)) -> dict:
+                  statuses=(AuctionStatus.AWARDED,), org_id: int | None = None) -> dict:
     """Report 1, for auctions decided inside the period.
 
     The filter has to match the date shown in the row. Filtering on
@@ -80,6 +80,7 @@ def total_savings(db: Session, start: datetime, end: datetime,
     """
     query = (db.query(Auction)
                .filter(Auction.status.in_(list(statuses)))
+               .filter(Auction.org_id == org_id)
                .filter(DECISION_DATE >= start, DECISION_DATE <= end)
                .order_by(DECISION_DATE.asc()))
     rows = []

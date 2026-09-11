@@ -27,9 +27,11 @@ def _masters_screen(request: Request, db: Session, user: User, tab: str = "vendo
     """The masters page. ``prefill`` puts back what was typed after a refusal -
     a mistyped email used to wipe all eight boxes and send the buyer back to a
     blank form."""
-    vendors = db.query(Vendor).order_by(Vendor.name).all()
-    items = db.query(Item).order_by(Item.name).all()
-    units = db.query(Unit).order_by(Unit.code).all()
+    # Everything on this screen belongs to the signed-in organisation, and
+    # nothing else is ever reachable from it.
+    vendors = db.query(Vendor).filter(Vendor.org_id == user.org_id).order_by(Vendor.name).all()
+    items = db.query(Item).filter(Item.org_id == user.org_id).order_by(Item.name).all()
+    units = db.query(Unit).filter(Unit.org_id == user.org_id).order_by(Unit.code).all()
     if q:
         needle = q.lower()
         vendors = [v for v in vendors if needle in v.name.lower() or needle in v.email.lower()]
@@ -95,7 +97,8 @@ def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Ve
                             "invitations go.")
     email, rest = typed[0], typed[1:]
     extras = [a for a in rest + extras if a != email]
-    existing = db.query(Vendor).filter(Vendor.email == email).first()
+    existing = (db.query(Vendor)
+                  .filter(Vendor.email == email, Vendor.org_id == user.org_id).first())
     if existing:
         # That address is already on file. Update the record rather than
         # quietly discarding what was just typed, and bring it back from the
@@ -115,7 +118,7 @@ def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Ve
         existing.reused = True
         return existing
     extra["extra_emails"] = "\n".join(dict.fromkeys(extras))
-    vendor = Vendor(name=name, email=email, created_by_id=user.id,
+    vendor = Vendor(name=name, email=email, created_by_id=user.id, org_id=user.org_id,
                     **{k: (v or "") for k, v in extra.items()})
     db.add(vendor)
     db.flush()
@@ -133,18 +136,20 @@ def create_item(db: Session, user: User, name: str, **extra) -> Item:
     if unit_id and not str(unit_id).strip().isdigit():
         raise MasterProblem("That unit was not one of the choices. Reload the page and pick "
                             "it again.")
-    if unit_id and not db.get(Unit, int(unit_id)):
+    picked_unit = db.get(Unit, int(unit_id)) if unit_id else None
+    if unit_id and (picked_unit is None or picked_unit.org_id != user.org_id):
         raise MasterProblem("That unit no longer exists. Pick another one.")
     # Two items with the same name give the auction form two identical choices
     # and nobody can tell which is which afterwards.
-    twin = db.query(Item).filter(func.lower(Item.name) == name.lower()).first()
+    twin = (db.query(Item).filter(func.lower(Item.name) == name.lower(),
+                                  Item.org_id == user.org_id).first())
     if twin:
         raise MasterProblem(
             f"“{twin.name}” is already on your item list"
             + (" (archived — restore it instead of adding it again)."
                if not twin.is_active else ". Pick it from the list rather than adding it twice.")
         )
-    item = Item(name=name, created_by_id=user.id,
+    item = Item(name=name, created_by_id=user.id, org_id=user.org_id,
                 default_unit_id=int(unit_id) if unit_id else None,
                 **{k: (v or "") for k, v in extra.items()})
     db.add(item)
@@ -159,11 +164,12 @@ def create_unit(db: Session, user: User, code: str, name: str = "") -> Unit:
     code = code.strip().upper()
     if not code:
         raise MasterProblem("A unit needs a short code, like KG.")
-    existing = db.query(Unit).filter(Unit.code == code).first()
+    existing = (db.query(Unit)
+                  .filter(Unit.code == code, Unit.org_id == user.org_id).first())
     if existing:
         existing.reused = True
         return existing
-    unit = Unit(code=code, name=name.strip())
+    unit = Unit(code=code, name=name.strip(), org_id=user.org_id)
     db.add(unit)
     db.flush()
     record(db, action="unit.create", entity_type="unit", entity_id=unit.id, actor=user,
@@ -214,6 +220,8 @@ def update_vendor_emails(vendor_id: int, request: Request, email: str = Form("")
                          db: Session = Depends(get_db)):
     """Edit exactly who at this vendor receives the platform's emails."""
     vendor = db.get(Vendor, vendor_id)
+    if vendor is not None and vendor.org_id != user.org_id:
+        vendor = None       # another organisation's supplier is not ours to touch
     if not vendor:
         raise HTTPException(404, "That vendor no longer exists.")
     try:
@@ -324,6 +332,8 @@ def quick_unit(code: str = Form(""), name: str = Form(""),
 def toggle_vendor(vendor_id: int, request: Request, user: User = Depends(buyer_only),
                   db: Session = Depends(get_db)):
     vendor = db.get(Vendor, vendor_id)
+    if vendor is not None and vendor.org_id != user.org_id:
+        vendor = None       # another organisation's supplier is not ours to touch
     if not vendor:
         raise HTTPException(404, "That vendor no longer exists.")
     vendor.is_active = not vendor.is_active
@@ -337,6 +347,8 @@ def toggle_vendor(vendor_id: int, request: Request, user: User = Depends(buyer_o
 def toggle_item(item_id: int, request: Request, user: User = Depends(buyer_only),
                 db: Session = Depends(get_db)):
     item = db.get(Item, item_id)
+    if item is not None and item.org_id != user.org_id:
+        item = None
     if not item:
         raise HTTPException(404, "That item no longer exists.")
     item.is_active = not item.is_active

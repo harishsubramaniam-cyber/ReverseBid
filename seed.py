@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 
 from app import config
 from app.db import Base, SessionLocal, engine
-from app.models import (Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,
+from app.models import (Auction, Organisation, AuctionLine, AuctionStatus, Award, Bid, DecrementType,
                         EmailMessage, Item, Message, Notification, Participant, Role, Unit,
                         User, Vendor, AuditLog)
 from app.security import hash_password
@@ -59,7 +59,10 @@ def build() -> None:
         return
 
     # ---------------------------------------------------------------- people
-    buyer = User(name="Priya Raman", email="buyer@demo.in", role=Role.BUYER,
+    org = Organisation(name="Sundaram Engineering Works")
+    db.add(org)
+    db.flush()
+    buyer = User(name="Priya Raman", email="buyer@demo.in", role=Role.BUYER, org_id=org.id,
                  password_hash=hash_password(PASSWORD), onboarding_done=True)
     db.add(buyer)
     db.flush()
@@ -77,6 +80,7 @@ def build() -> None:
     vendors, vendor_users = [], []
     for name, email, contact, extra in vendor_specs:
         vendor = Vendor(name=name, email=email, contact_person=contact, extra_emails=extra,
+                        org_id=org.id,
                         code=name.split()[0][:4].upper(), created_by_id=buyer.id,
                         # What it costs to get their goods here. Only used by an
                         # auction that is compared on the delivered price.
@@ -84,6 +88,7 @@ def build() -> None:
         db.add(vendor)
         db.flush()
         user = User(name=contact, email=email, role=Role.VENDOR, vendor_id=vendor.id,
+                    org_id=org.id,
                     password_hash=hash_password(PASSWORD), onboarding_done=True)
         db.add(user)
         vendors.append(vendor)
@@ -93,6 +98,7 @@ def build() -> None:
     #  state of a new vendor. They are invited to the scheduled auction, and
     #  their invitation email carries the link that sets their password.
     not_yet_joined = Vendor(name="Bharat Fasteners", email="sales@bharatfast.example",
+                            org_id=org.id,
                             contact_person="Anil Gupta", code="BHAR",
                             created_by_id=buyer.id, default_freight=1.5)
     db.add(not_yet_joined)
@@ -102,7 +108,7 @@ def build() -> None:
     units = {}
     for code, name in [("NOS", "Numbers"), ("KG", "Kilogram"), ("MT", "Metric tonne"),
                        ("MTR", "Metre"), ("LTR", "Litre")]:
-        unit = Unit(code=code, name=name)
+        unit = Unit(code=code, name=name, org_id=org.id)
         db.add(unit)
         units[code] = unit
     db.flush()
@@ -117,6 +123,7 @@ def build() -> None:
     items = []
     for name, unit_code, category, price, qty in item_specs:
         item = Item(name=name, category=category, default_unit_id=units[unit_code].id,
+                    org_id=org.id,
                     created_by_id=buyer.id)
         db.add(item)
         db.flush()
@@ -133,7 +140,8 @@ def build() -> None:
         auction = Auction(
             reference=f"RA-{start.year}-{counter['n']:04d}", title=title,
             cc_emails=kwargs.pop("cc_emails", ""),
-            description=kwargs.pop("description", ""), creator_id=buyer.id, status=status,
+            description=kwargs.pop("description", ""), creator_id=buyer.id,
+            org_id=buyer.org_id, status=status,
             start_at=start, end_at=end, original_end_at=end,
             decrement_type=DecrementType.ABSOLUTE,
             min_decrement=kwargs.pop("min_decrement", 1.0),

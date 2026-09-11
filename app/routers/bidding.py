@@ -36,7 +36,8 @@ def post_bid(auction_id: int, request: Request, line_id: str = Form(""),
     # clean 404 into a 500 error page.
     key = _row_id(line_id)
     line = db.get(AuctionLine, key) if key else None
-    if not auction or not line or line.auction_id != auction.id:
+    if (not auction or auction.org_id != user.org_id
+            or not line or line.auction_id != auction.id):
         raise HTTPException(404, "That item is not part of this auction.")
     if not unit_price.strip():
         return redirect(f"/auctions/{auction_id}",

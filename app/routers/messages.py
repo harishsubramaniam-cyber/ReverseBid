@@ -19,7 +19,7 @@ def post_message(auction_id: int, request: Request, body: str = Form(""),
                  vendor_id: int = Form(0), user: User = Depends(current_user),
                  db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     body = body.strip()
     if not body:

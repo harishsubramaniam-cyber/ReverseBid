@@ -76,14 +76,18 @@ def safe_next(target: str | None, fallback: str = "/") -> str:
 _invite = URLSafeTimedSerializer(SECRET_KEY, salt="ra-invite")
 
 
-def make_invite(email: str, role: str, vendor_id: int | None = None) -> str:
+def make_invite(email: str, role: str, vendor_id: int | None = None,
+                org_id: int | None = None) -> str:
     """A signed link that lets one address set a password, once.
 
     Suppliers never choose which vendor they belong to: the buyer has already
     created the vendor record, and this token is what binds the new login to
-    it. Nothing is stored, so an unused invitation simply expires.
+    it. It carries the organisation too, so the account it creates lands in
+    the right company - the same address may well hold an account with
+    another one. Nothing is stored, so an unused invitation simply expires.
     """
-    return _invite.dumps({"e": email.strip().lower(), "r": role, "v": vendor_id})
+    return _invite.dumps({"e": email.strip().lower(), "r": role, "v": vendor_id,
+                          "o": org_id})
 
 
 def read_invite(token: str, max_age_days: int) -> dict | None:
@@ -93,6 +97,8 @@ def read_invite(token: str, max_age_days: int) -> dict | None:
         return None
     if not isinstance(data, dict) or not data.get("e") or data.get("r") not in ("vendor", "buyer"):
         return None
+    if not data.get("o"):
+        return None          # an invitation that names no organisation is not usable
     return data
 
 

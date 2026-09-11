@@ -123,7 +123,8 @@ def cc_recipients(db: Session, auction: Auction) -> list[Recipient]:
 def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: str,
          paragraphs: Sequence[str], facts: Sequence[tuple[str, str]] = (),
          cta_text: str = "", link: str = "", note: str = "",
-         auction: Auction | None = None, in_app: bool = True) -> int:
+         auction: Auction | None = None, in_app: bool = True,
+         org_id: int | None = None) -> int:
     """Deliver one event to many users. Returns the number of emails queued.
 
     A bidder contact with no login gets a link that sets a password, on every
@@ -154,7 +155,8 @@ def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: s
         if person.vendor_id and not person.user_id:
             # No account yet: send them the one link that can create it.
             from .security import make_invite
-            token = make_invite(person.email, "vendor", person.vendor_id)
+            token = make_invite(person.email, "vendor", person.vendor_id,
+                                org_id=auction.org_id if auction is not None else None)
             person_link = f"/join/{token}"
             person_cta = "Set your password and bid"
             person_paragraphs.append(
@@ -173,7 +175,8 @@ def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: s
         )
         queue_email(db, to_email=person.email, to_name=person.name, subject=title,
                     html_body=html, event=event,
-                    auction_id=auction.id if auction else None)
+                    auction_id=auction.id if auction else None,
+                    org_id=(auction.org_id if auction is not None else org_id))
         count += 1
     db.commit()
     return count
@@ -475,7 +478,7 @@ def colleague_invited(db: Session, inviter: User, email: str, vendor, link: str)
     where = vendor.name if vendor is not None else config.APP_NAME
     return send(
         db, [Recipient(name=_name_from_email(email), email=email)],
-        event="invited", title=f"{inviter.name} has invited you to {where}",
+        org_id=inviter.org_id, event="invited", title=f"{inviter.name} has invited you to {where}",
         paragraphs=[
             f"<b>{inviter.name}</b> has invited you to join <b>{where}</b> on "
             f"{config.APP_NAME}"

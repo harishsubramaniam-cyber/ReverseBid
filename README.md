@@ -279,6 +279,7 @@ python tests/test_regressions.py     # one check per bug ever found and fixed
 python tests/test_features.py        # delivered cost, documents, invitations
 python tests/test_scenarios.py       # the auction maths, proved with numbers
 python tests/test_email.py           # sending, against a real SMTP server
+python tests/test_organisations.py   # two buying organisations, and the wall between them
 python tests/test_browser.py         # the screens themselves, in a real browser
 ```
 

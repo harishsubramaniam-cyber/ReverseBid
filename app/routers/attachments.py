@@ -26,7 +26,7 @@ OPEN_TO_UPLOAD = (AuctionStatus.SCHEDULED, AuctionStatus.LIVE, AuctionStatus.CLO
 
 def _auction_for(db: Session, auction_id: int, user: User) -> Auction:
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     if user.is_buyer_side:
         return auction

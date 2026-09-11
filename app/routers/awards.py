@@ -25,9 +25,15 @@ from ..web import client_ip, redirect, render
 router = APIRouter(prefix="/auctions")
 
 
-def _awardable(db: Session, auction_id: int) -> Auction:
+def _safe_auction(db: Session, auction_id: int, user: User) -> Auction | None:
+    """The auction, but only if it is this organisation's."""
     auction = db.get(Auction, auction_id)
-    if not auction:
+    return auction if auction is not None and auction.org_id == user.org_id else None
+
+
+def _awardable(db: Session, auction_id: int, user: User) -> Auction:
+    auction = db.get(Auction, auction_id)
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     if auction.status not in (AuctionStatus.CLOSED, AuctionStatus.AWARDED):
         raise ActionError("You can award once bidding has closed. Use “Close bidding now” if "
@@ -89,7 +95,7 @@ def _award_screen(request: Request, db: Session, user: User, auction,
 def award_form(auction_id: int, request: Request, user: User = Depends(buyer_only),
                db: Session = Depends(get_db)):
     try:
-        auction = _awardable(db, auction_id)
+        auction = _awardable(db, auction_id, user)
     except ActionError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
     return _award_screen(request, db, user, auction)
@@ -99,7 +105,7 @@ def award_form(auction_id: int, request: Request, user: User = Depends(buyer_onl
 async def post_award(auction_id: int, request: Request, user: User = Depends(buyer_only),
                      db: Session = Depends(get_db)):
     try:
-        auction = _awardable(db, auction_id)
+        auction = _awardable(db, auction_id, user)
     except ActionError as exc:
         return redirect(f"/auctions/{auction_id}", str(exc), kind="error")
 
@@ -188,7 +194,7 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
     except ActionError as exc:
         db.rollback()
         db.expire_all()
-        return _award_screen(request, db, user, db.get(Auction, auction_id),
+        return _award_screen(request, db, user, _safe_auction(db, auction_id, user),
                              error=str(exc), form=form)
 
     # Winners hear what they won; everyone else hears the outcome too. Every

@@ -6,12 +6,18 @@ that you can paste into an email and anyone can click.
 
 It is **free**, it takes about ten minutes, and you never touch a command line.
 
-**What visitors will find.** The site comes up already filled with a demo company:
+**What visitors will find.** The site comes up already filled with a demo company —
 a live auction with bids arriving, four suppliers, finished auctions with savings
-on the dashboard. They sign in with a published password, poke at everything, and
-nothing they do can reach a real supplier — because this deployment has no mail
-server attached, every email is kept inside the app's own Outbox page for them to
-read instead of being sent.
+on the dashboard — which they can sign into with a published password.
+
+They can also press **Set up my organisation** and start their own, empty and
+entirely separate: their own suppliers, items and auctions, which nobody else on
+the site can see. That is the more convincing demonstration, because it is exactly
+what a real buyer would do on day one.
+
+Nothing they do can reach a real supplier: this deployment has no mail server
+attached, so every email is kept inside the app's own Outbox page for them to read
+instead of being sent.
 
 > **This is a showcase, not a live tender.** Whatever visitors type is wiped
 > whenever the service restarts, and the demo company is rebuilt clean. That is
@@ -160,13 +166,13 @@ auctions you want exactly the opposite of a demo. In Render, open the service �
    `RA_DATA_DIR=/var/data` and
    `RA_DATABASE_URL=sqlite:////var/data/reverse_auction.db`.
    Without a disk a live auction would vanish at the next restart.
-2. **Turn the demo off.** Set `RA_DEMO_SEED=0`, and then **wipe the demo
-   company** before anyone real touches it — its accounts have a published
-   password. The simplest way is to add the disk first, then delete the database
-   file from Render's shell, restart, and sign up as the first account. **The
-   very first account created becomes the owner and then sign-up closes**, so
-   claim it yourself the moment the real instance starts, before you share the
-   address.
+2. **Turn the demo off.** Set `RA_DEMO_SEED=0`, and wipe the demo company before
+   anyone real uses the site — its accounts have a published password. Add the
+   disk first, delete the database file from Render's shell, restart, then press
+   **Set up my organisation** to create your real one. Anyone else who finds the
+   address can set up an organisation of their own, and they will see nothing of
+   yours; if you would rather nobody could, put the site behind a password at the
+   Render level or run it on an internal address.
 3. **Switch email on.** Add `RA_SMTP_HOST`, `RA_SMTP_PORT`, `RA_SMTP_USER`,
    `RA_SMTP_PASSWORD` and `RA_MAIL_FROM` — the same five values as in the
    Windows guide. Then open the **Outbox** page and press **Send test email**,

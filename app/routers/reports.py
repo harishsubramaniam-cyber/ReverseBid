@@ -63,8 +63,8 @@ def reports_home(request: Request, date_from: str = "", date_to: str = "",
     statuses = [AuctionStatus.AWARDED]
     if include_closed:
         statuses.append(AuctionStatus.CLOSED)
-    data = reporting.total_savings(db, start, end, tuple(statuses))
-    auctions = (db.query(Auction)
+    data = reporting.total_savings(db, start, end, tuple(statuses), org_id=user.org_id)
+    auctions = (db.query(Auction).filter(Auction.org_id == user.org_id)
                   .filter(Auction.status.in_([AuctionStatus.CLOSED, AuctionStatus.AWARDED,
                                               AuctionStatus.LIVE]))
                   .order_by(Auction.start_at.desc()).limit(100).all())
@@ -81,7 +81,7 @@ def savings_download(fmt: str, date_from: str = "", date_to: str = "",
                      db: Session = Depends(get_db)):
     start, end, from_label, to_label = _window(date_from, date_to)
     statuses = [AuctionStatus.AWARDED] + ([AuctionStatus.CLOSED] if include_closed else [])
-    data = reporting.total_savings(db, start, end, tuple(statuses))
+    data = reporting.total_savings(db, start, end, tuple(statuses), org_id=user.org_id)
     stamp = f"{from_label.replace('-', '')}-{to_label.replace('-', '')}"
     if fmt == "csv":
         return Response(reporting.savings_csv(data), media_type="text/csv",
@@ -98,7 +98,7 @@ def savings_download(fmt: str, date_from: str = "", date_to: str = "",
 def auction_report(auction_id: int, request: Request, user: User = Depends(buyer_side),
                    db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     data = reporting.auction_summary_report(db, auction)
     return render(request, "report_auction.html", {"data": data, "auction": auction},
@@ -109,7 +109,7 @@ def auction_report(auction_id: int, request: Request, user: User = Depends(buyer
 def auction_download(auction_id: int, fmt: str, user: User = Depends(buyer_side),
                      db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    if not auction:
+    if not auction or auction.org_id != user.org_id:
         raise HTTPException(404, "That auction does not exist.")
     data = reporting.auction_summary_report(db, auction)
     if fmt == "csv":
