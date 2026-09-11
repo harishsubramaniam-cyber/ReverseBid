@@ -142,4 +142,9 @@ async def unhandled_handler(request: Request, exc: Exception):
 
 @app.get("/healthz", include_in_schema=False)
 def healthz():
-    return {"status": "ok", "email_mode": "smtp" if config.EMAIL_ENABLED else "outbox"}
+    # The version and the way email is being sent are here on purpose: when
+    # something is not working on a server you cannot see, this one address
+    # answers "which build is running, and is email switched on?" without a
+    # password. Neither value is a secret - no address, key or password.
+    return {"status": "ok", "version": config.VERSION,
+            "email_mode": (config.MAIL_API or "smtp") if config.EMAIL_ENABLED else "outbox"}

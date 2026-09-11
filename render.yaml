@@ -13,6 +13,28 @@
 #   * No mail server. Every email the app would send is kept in its Outbox
 #     page instead, where visitors can read exactly what a supplier receives.
 #     Nobody's real inbox is touched, and there is no password to set up.
+#
+#     TO REALLY SEND EMAIL: do NOT add the settings here. Render treats this
+#     file as the master copy and would wipe your key the next time the
+#     blueprint syncs - and it would sit in your public GitHub repository in
+#     the meantime. Instead open the service in Render -> Environment -> Add
+#     environment variable.
+#
+#     Note that Render's FREE plan blocks outbound traffic to the ports mail
+#     servers listen on (25, 465, 587), so Gmail cannot work here however it
+#     is configured - it fails with "Network is unreachable". Use an email
+#     service over https instead, which is not blocked; two settings:
+#
+#         RA_MAIL_API_KEY    the key from a free brevo.com account
+#         RA_MAIL_FROM       the sending address you confirmed there
+#
+#     (A Resend key works the same way - the app recognises which service a
+#     key belongs to.) On a PAID instance, where the mail ports are open, the
+#     five SMTP settings work instead: RA_SMTP_HOST, RA_SMTP_PORT,
+#     RA_SMTP_USER, RA_SMTP_PASSWORD, RA_MAIL_FROM.
+#
+#     Save; Render restarts the service by itself. Then open the Outbox page
+#     and press "Send test email" - it prints exactly what happened.
 #   * No disk. The free plan has no permanent storage, so whatever visitors
 #     do is wiped when the service restarts — and the demo company is rebuilt
 #     automatically, clean, the moment it next starts. A demo that resets

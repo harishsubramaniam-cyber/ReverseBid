@@ -122,7 +122,10 @@ def deliver(msg_id: int) -> str:
             mime = _build_mime(msg)
             if config.EMAIL_ENABLED:
                 try:
-                    _smtp_send(mime, msg.to_email)
+                    if config.MAIL_API:
+                        _api_send(msg)
+                    else:
+                        _smtp_send(mime, msg.to_email)
                     msg.status, msg.sent_at, msg.error = "sent", datetime.utcnow(), ""
                 except Exception as exc:
                     msg.status, msg.error = "failed", explain(exc)
@@ -157,7 +160,19 @@ def explain(exc: Exception) -> str:
     raw = str(exc)
     low = raw.lower()
     hint = ""
-    if isinstance(exc, smtplib.SMTPAuthenticationError) or "authentication" in low \
+    if isinstance(exc, MailApiError):
+        # The service already answered in words; do not bury them in jargon.
+        return raw
+    if getattr(exc, "errno", None) in (101, 113, 51) or "network is unreachable" in low \
+            or "no route to host" in low:
+        where = f"{config.HOST_NAME}'s" if config.HOST_NAME else "This machine's"
+        hint = (f"The connection could not even be started, which means the way out is shut "
+                f"rather than the mail server being wrong. {where} network blocks outbound "
+                f"email ports — Render's free plan blocks 25, 465 and 587 outright. No mail "
+                f"setting can get past that. Either move to a paid instance, or send through "
+                f"an email service over https instead: make a free account at brevo.com, then "
+                f"set RA_MAIL_API_KEY to the key it gives you and remove RA_SMTP_HOST.")
+    elif isinstance(exc, smtplib.SMTPAuthenticationError) or "authentication" in low \
             or "username and password not accepted" in low or "5.7.8" in raw:
         hint = ("The mail server would not accept the username and password. On Gmail this "
                 "must be a 16-character App password, not your normal password, and "
@@ -206,14 +221,25 @@ def send_test(to_email: str) -> tuple[bool, str]:
     if not config.EMAIL_ENABLED:
         path = Path(config.OUTBOX_DIR) / "test-message.eml"
         path.write_bytes(bytes(mime))
-        return False, ("No mail server is set, so nothing was sent — the test message was "
-                       "saved to data/outbox/test-message.eml instead. Put your settings in "
-                       "the .env file and restart to send for real.")
+        where = (f"Add RA_SMTP_HOST, RA_SMTP_PORT, RA_SMTP_USER, RA_SMTP_PASSWORD and "
+                 f"RA_MAIL_FROM in {config.HOST_NAME} ({config.HOST_SETTINGS_HINT}) and let it "
+                 "restart." if config.HOST_NAME else
+                 f"Put your settings in {config.BASE_DIR / '.env'} and restart to send for real.")
+        return False, ("No mail server is set, so nothing was sent — the test message was saved "
+                       f"to {path} instead. " + where)
+    through = config.MAIL_API or config.SMTP_HOST
     try:
-        _smtp_send(mime, to_email)
+        if config.MAIL_API:
+            # A throwaway row, never saved: _api_send speaks in the same
+            # fields every other message is built from.
+            _api_send(EmailMessage(to_email=to_email, to_name="",
+                                   subject=str(mime["Subject"]), html_body=body,
+                                   text_body=_html_to_text(body)))
+        else:
+            _smtp_send(mime, to_email)
     except Exception as exc:
-        return False, f"{config.SMTP_HOST} did not accept the message. {explain(exc)}"
-    return True, (f"Sent to {to_email} through {config.SMTP_HOST}. If it is not in the inbox "
+        return False, f"{through} did not accept the message. {explain(exc)}"
+    return True, (f"Sent to {to_email} through {through}. If it is not in the inbox "
                   "within a minute, look in the spam folder.")
 
 
@@ -221,6 +247,10 @@ def settings_summary() -> dict:
     """What the app is actually using, for the Outbox page. Never the password."""
     return {
         "enabled": config.EMAIL_ENABLED,
+        "version": config.VERSION,
+        # Which of the two ways of sending is in use: an email service over
+        # https, or a mail server over SMTP.
+        "api": config.MAIL_API,
         "host": config.SMTP_HOST,
         "port": config.SMTP_PORT,
         "user": config.SMTP_USER,
@@ -230,6 +260,11 @@ def settings_summary() -> dict:
         "password_set": bool(config.SMTP_PASSWORD),
         "env_file": str(config.BASE_DIR / ".env"),
         "env_file_found": (config.BASE_DIR / ".env").is_file(),
+        # On a hosting service there is no file to edit: the settings are
+        # typed into a dashboard, so the page must say that instead.
+        "host_name": config.HOST_NAME,
+        "host_hint": config.HOST_SETTINGS_HINT,
+        "outbox_dir": str(config.OUTBOX_DIR),
     }
 
 
@@ -262,6 +297,67 @@ def _build_mime(msg: EmailMessage) -> PyEmailMessage:
     mime.set_content(msg.text_body or _html_to_text(msg.html_body))
     mime.add_alternative(msg.html_body, subtype="html")
     return mime
+
+
+class MailApiError(RuntimeError):
+    """The email service answered, and the answer was no."""
+
+
+def _api_send(msg: EmailMessage) -> None:
+    """Hand the message to an email service over https instead of SMTP.
+
+    This exists because of one specific, very common wall: a free hosting plan
+    that blocks outbound SMTP ports. The connection then fails before a single
+    byte is sent - "Network is unreachable" - and no mail setting can fix it,
+    because the ports are shut. Port 443 is not, so the same message goes out
+    as an ordinary web request.
+
+    Deliberately written on urllib, so turning email on never means installing
+    anything.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    if config.MAIL_API == "brevo":
+        url = "https://api.brevo.com/v3/smtp/email"
+        headers = {"api-key": config.MAIL_API_KEY, "accept": "application/json"}
+        payload = {
+            "sender": {"name": config.MAIL_FROM_NAME, "email": config.MAIL_FROM},
+            "to": [{"email": msg.to_email, **({"name": msg.to_name} if msg.to_name else {})}],
+            "subject": msg.subject,
+            "htmlContent": msg.html_body,
+            "textContent": msg.text_body or _html_to_text(msg.html_body),
+        }
+    elif config.MAIL_API == "resend":
+        url = "https://api.resend.com/emails"
+        headers = {"Authorization": f"Bearer {config.MAIL_API_KEY}"}
+        payload = {
+            "from": formataddr((config.MAIL_FROM_NAME, config.MAIL_FROM)),
+            "to": [msg.to_email],
+            "subject": msg.subject,
+            "html": msg.html_body,
+            "text": msg.text_body or _html_to_text(msg.html_body),
+        }
+    else:
+        raise MailApiError(
+            f"“{config.MAIL_API}” is not an email service this app knows. Set RA_MAIL_API to "
+            "brevo or resend, or leave it empty and let the key decide.")
+
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"content-type": "application/json", **headers})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:          # the service refused it
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")[:400]
+        except Exception:
+            pass
+        raise MailApiError(f"{config.MAIL_API} refused the message "
+                           f"({exc.code} {exc.reason}). {body}") from exc
 
 
 def _smtp_send(mime: PyEmailMessage, to_email: str) -> None:  # pragma: no cover - network

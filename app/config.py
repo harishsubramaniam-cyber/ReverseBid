@@ -25,6 +25,39 @@ def _load_dotenv() -> None:
 
 
 _load_dotenv()
+
+
+def _text(name: str, default: str = "") -> str:
+    """A setting as typed, with the stray spaces a dashboard field collects."""
+    value = os.getenv(name)
+    return default if value is None else value.strip()
+
+
+def _int(name: str, default: int) -> int:
+    """A whole-number setting that refuses to bring the app down.
+
+    Hosting dashboards make it very easy to leave a box empty or to paste
+    "587 " into it. Crashing on startup for that would be a blank screen with
+    the reason buried in a log, so anything unreadable falls back to the
+    default the app was shipped with.
+    """
+    raw = _text(name)
+    if not raw:
+        return default
+    try:
+        return int(float(raw))
+    except ValueError:
+        return default
+
+
+def _flag(name: str, default: bool) -> bool:
+    """A yes/no setting, written however the person naturally writes it."""
+    raw = _text(name).lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
 DATA_DIR = Path(os.getenv("RA_DATA_DIR", BASE_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 OUTBOX_DIR = DATA_DIR / "outbox"
@@ -70,7 +103,16 @@ def _secret_key() -> str:
 
 
 SECRET_KEY = _secret_key()
-APP_NAME = os.getenv("RA_APP_NAME", "ReverseBid")
+
+#: Which build this is. Read from the VERSION file that ships with the code,
+#: so "is the new version actually running?" - the question behind an
+#: astonishing amount of wasted time - can be answered by looking, both on the
+#: Outbox page and at /healthz, without signing in or reading a deploy log.
+try:
+    VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() or "unknown"
+except OSError:
+    VERSION = "unknown"
+APP_NAME = _text("RA_APP_NAME", "ReverseBid") or "ReverseBid"
 #: The address people actually reach this app on. It goes into every link in
 #: every email, and it decides whether session cookies are marked "secure", so
 #: getting it wrong sends suppliers links to localhost. Hosts that know their
@@ -83,40 +125,72 @@ BASE_URL = (os.getenv("RA_BASE_URL")
             or (f"https://{os.environ['FLY_APP_NAME']}.fly.dev"
                 if os.getenv("FLY_APP_NAME") else "")
             or "http://localhost:8000").rstrip("/")
+
+#: Which hosting service this is running on, if any. Used only to give the
+#: right instructions on screen: a .env file is the answer on your own PC, but
+#: on a host there is no file to edit and settings are typed into a dashboard.
+HOST_NAME = ("Render" if os.getenv("RENDER") else
+             "Railway" if os.getenv("RAILWAY_ENVIRONMENT") or
+             os.getenv("RAILWAY_PROJECT_ID") else
+             "Fly.io" if os.getenv("FLY_APP_NAME") else
+             "Heroku" if os.getenv("DYNO") else "")
+#: Where that host's settings screen lives, so the page can say "go here".
+HOST_SETTINGS_HINT = {
+    "Render": "your service → Environment → Add environment variable",
+    "Railway": "your service → Variables",
+    "Fly.io": "fly secrets set NAME=value",
+    "Heroku": "Settings → Config Vars",
+}.get(HOST_NAME, "")
 CURRENCY = os.getenv("RA_CURRENCY", "INR")
 CURRENCY_SYMBOL = os.getenv("RA_CURRENCY_SYMBOL", "₹")
 
 # ---------------------------------------------------------------- email
-SMTP_HOST = os.getenv("RA_SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("RA_SMTP_PORT", "587"))
-SMTP_USER = os.getenv("RA_SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("RA_SMTP_PASSWORD", "")
-SMTP_STARTTLS = os.getenv("RA_SMTP_STARTTLS", "1") not in ("0", "false", "False")
-SMTP_SSL = os.getenv("RA_SMTP_SSL", "0") not in ("0", "false", "False")
-MAIL_FROM = os.getenv("RA_MAIL_FROM", "no-reply@reversebid.local")
-MAIL_FROM_NAME = os.getenv("RA_MAIL_FROM_NAME", APP_NAME)
+SMTP_HOST = _text("RA_SMTP_HOST")
+SMTP_PORT = _int("RA_SMTP_PORT", 587)
+SMTP_USER = _text("RA_SMTP_USER")
+SMTP_PASSWORD = os.getenv("RA_SMTP_PASSWORD", "").strip()
+SMTP_STARTTLS = _flag("RA_SMTP_STARTTLS", True)
+SMTP_SSL = _flag("RA_SMTP_SSL", False)
+MAIL_FROM = _text("RA_MAIL_FROM", "no-reply@reversebid.local") or "no-reply@reversebid.local"
+MAIL_FROM_NAME = _text("RA_MAIL_FROM_NAME", APP_NAME) or APP_NAME
 
-#: When no SMTP host is configured the mailer writes .eml files to the outbox
-#: instead of sending. Every message is recorded in the database either way.
-EMAIL_ENABLED = bool(SMTP_HOST)
+# ------------------------------------------------- email without SMTP
+#: Some hosts block outbound SMTP outright - Render's free plan blocks ports
+#: 25, 465 and 587, which is a connection that fails before it even starts.
+#: The way out is to hand the message to an email service over ordinary https
+#: instead, on port 443, which nobody blocks. Set RA_MAIL_API_KEY to the key
+#: that service gave you and the app uses it in preference to SMTP.
+MAIL_API_KEY = os.getenv("RA_MAIL_API_KEY", "").strip()
+_api = _text("RA_MAIL_API").lower()
+if not _api and MAIL_API_KEY:
+    # The two services' keys are unmistakable, so there is no need to make
+    # anyone type the name of the one whose key they just pasted in.
+    _api = ("resend" if MAIL_API_KEY.startswith("re_")
+            else "brevo" if MAIL_API_KEY.startswith("xkeysib-") else "")
+MAIL_API = _api if MAIL_API_KEY else ""
+
+#: With neither a mail server nor an email service the mailer writes .eml
+#: files to the outbox instead of sending. Every message is recorded in the
+#: database either way.
+EMAIL_ENABLED = bool(MAIL_API or SMTP_HOST)
 
 # ---------------------------------------------------------------- engine
-SCHEDULER_INTERVAL_SECONDS = int(os.getenv("RA_SCHEDULER_INTERVAL", "5"))
-ENDING_SOON_MINUTES = int(os.getenv("RA_ENDING_SOON_MINUTES", "5"))
-STARTING_SOON_MINUTES = int(os.getenv("RA_STARTING_SOON_MINUTES", "30"))
+SCHEDULER_INTERVAL_SECONDS = _int("RA_SCHEDULER_INTERVAL", 5)
+ENDING_SOON_MINUTES = _int("RA_ENDING_SOON_MINUTES", 5)
+STARTING_SOON_MINUTES = _int("RA_STARTING_SOON_MINUTES", 30)
 
 # ---------------------------------------------------------------- documents
-MAX_UPLOAD_MB = int(os.getenv("RA_MAX_UPLOAD_MB", "10"))
-MAX_ATTACHMENTS = int(os.getenv("RA_MAX_ATTACHMENTS", "30"))
+MAX_UPLOAD_MB = _int("RA_MAX_UPLOAD_MB", 10)
+MAX_ATTACHMENTS = _int("RA_MAX_ATTACHMENTS", 30)
 #: How long an invitation link to set a password stays usable.
-INVITE_DAYS = int(os.getenv("RA_INVITE_DAYS", "30"))
+INVITE_DAYS = _int("RA_INVITE_DAYS", 30)
 
 # ---------------------------------------------------------------- behind a proxy
 #: How many reverse proxies sit in front of this app. Zero - the default, and
 #: the right answer when you run it yourself - means X-Forwarded-For is
 #: ignored entirely, because anyone can put whatever they like in it. Set it
 #: to 1 behind a single nginx or load balancer, and so on.
-TRUSTED_PROXIES = int(os.getenv("RA_TRUSTED_PROXIES", "0"))
+TRUSTED_PROXIES = _int("RA_TRUSTED_PROXIES", 0)
 
 # ---------------------------------------------------------------- demo mode
 #: Fill an empty database with the sample company on startup. For a
@@ -124,4 +198,4 @@ TRUSTED_PROXIES = int(os.getenv("RA_TRUSTED_PROXIES", "0"))
 #: can sign in and click around. Never set this on an installation with real
 #: auctions in it: it only acts when the database is completely empty, but the
 #: accounts it creates have a published password.
-DEMO_SEED = os.getenv("RA_DEMO_SEED", "0") not in ("0", "false", "False", "")
+DEMO_SEED = _flag("RA_DEMO_SEED", False)

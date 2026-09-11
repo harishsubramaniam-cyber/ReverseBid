@@ -12,19 +12,42 @@
 
 {% if not mail.enabled %}
 <div class="alert info"><div><b>Practice mode — nothing is actually being sent.</b>
-  No mail server is set, so every message is saved here and to <code>data\outbox\</code> as a
-  .eml file you can open. That is deliberate: it lets you rehearse a whole auction without
-  emailing real suppliers.
-  <div class="small" style="margin-top:6px">To send for real, put your mail server settings in
-    <code>{{ mail.env_file }}</code>{% if not mail.env_file_found %} — <b>that file does not
-    exist yet</b>; copy <code>.env.example</code> to <code>.env</code>{% endif %} and restart the
-    app. The settings are read only when it starts.</div></div></div>
+  No mail server is set, so every message is saved here instead of leaving the site. That is why
+  the ones below say <b>Saved here</b>: they were produced correctly, and you can open and read
+  any of them exactly as a supplier would, but nobody's inbox was touched.
+  {% if mail.host_name %}
+  <div class="small" style="margin-top:8px">You are running on <b>{{ mail.host_name }}</b>, where
+    there is no file to edit — settings are typed in, at <b>{{ mail.host_hint }}</b>.
+    <div style="margin-top:8px"><b>Use an email service (works on every plan).</b> Free hosting
+      plans block the ports mail servers listen on — {{ mail.host_name }}'s blocks all of them —
+      so a Gmail password will not help there. An email service takes the message over ordinary
+      https instead. Make a free account at <b>brevo.com</b> (300 emails a day), confirm your
+      sending address, then add two settings:
+      <div style="margin-top:6px"><code>RA_MAIL_API_KEY</code> — the key Brevo gives you<br>
+        <code>RA_MAIL_FROM</code> — the address you confirmed there</div></div>
+    <div style="margin-top:8px"><b>Or use your own mail server</b>, if your plan allows outbound
+      mail: <code>RA_SMTP_HOST</code>, <code>RA_SMTP_PORT</code>, <code>RA_SMTP_USER</code>,
+      <code>RA_SMTP_PASSWORD</code>, <code>RA_MAIL_FROM</code> — for Gmail that is
+      <code>smtp.gmail.com</code>, <code>587</code>, your address, a 16-character <b>app
+      password</b> (not your normal password), and your address again.</div>
+    <div style="margin-top:8px">Either way, come back here afterwards and press <b>Send test
+      email</b>: it prints exactly what happened, in one line.</div></div>
+  {% else %}
+  <div class="small" style="margin-top:8px">Each one is also written to
+    <code>{{ mail.outbox_dir }}</code> as a .eml file you can double-click.
+    <div style="margin-top:6px">To send for real, put your mail server settings in
+      <code>{{ mail.env_file }}</code>{% if not mail.env_file_found %} — <b>that file does not
+      exist yet</b>; copy <code>.env.example</code> to <code>.env</code>{% endif %} and restart the
+      app. The settings are read only when it starts.</div></div>
+  {% endif %}</div></div>
 {% else %}
 <div class="alert ok"><div><b>Sending is switched on.</b>
-  <div class="small" style="margin-top:6px">Through <b>{{ mail.host }}</b> port {{ mail.port }}
-    ({{ mail.security }}), signing in as <b>{{ mail.user or 'no username' }}</b>{% if not
-    mail.password_set %} — <b>no password is set</b>{% endif %}, sending from
-    <b>{{ mail['from'] }}</b>.</div></div></div>
+  <div class="small" style="margin-top:6px">{% if mail.api %}Through the <b>{{ mail.api }}</b>
+    email service over https — which is why it works even where outbound mail ports are
+    blocked — sending from <b>{{ mail['from'] }}</b>.{% else %}Through <b>{{ mail.host }}</b>
+    port {{ mail.port }} ({{ mail.security }}), signing in as
+    <b>{{ mail.user or 'no username' }}</b>{% if not mail.password_set %} — <b>no password is
+    set</b>{% endif %}, sending from <b>{{ mail['from'] }}</b>.{% endif %}</div></div></div>
 {% endif %}
 
 <div class="card tight">
@@ -74,6 +97,10 @@
     {%- if q %}No emails match “{{ q }}”. <a href="/outbox">Show everything</a>.
     {%- else %}Nothing sent yet.{% endif %}</td></tr>{% endif %}
 </tbody></table></div>
+
+<p class="muted small" style="margin-top:14px">Running build <b>{{ mail.version }}</b>. If that
+  is not the version you last uploaded, the site is still running the old code and no setting
+  you change here will take effect.</p>
 {% if waiting %}
 {# Anything queued settles within a minute or two; reload until it has, so the
    page never sits showing a status that has since changed. #}

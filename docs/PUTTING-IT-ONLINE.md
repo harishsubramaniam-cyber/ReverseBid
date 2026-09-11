@@ -127,6 +127,83 @@ Both go away on Render's paid plan — see below.
 
 ---
 
+## Making the emails really go
+
+Out of the box the site is in **practice mode**: it writes every email into its
+own **Outbox** page instead of sending it, which is why those rows say
+**Saved here**. Nothing is broken — no mail server has been attached yet, on
+purpose, so visitors clicking around cannot email real suppliers.
+
+To switch real sending on, you do **not** edit any file — on Render the settings
+are typed into a form. There are two ways, and **on the free plan only the first
+one works.**
+
+### The way that works on the free plan: an email service
+
+Render's free plan blocks outbound traffic to the ports mail servers listen on
+(25, 465 and 587), so a Gmail password simply cannot get out — you get
+*"Network is unreachable"*, and no setting will fix it. The way round it is to
+hand the message to an email service over ordinary web traffic instead, which
+nothing blocks.
+
+1. Make a free account at **brevo.com** (300 emails a day, no card). Under
+   **Senders**, add your own email address and click the link they send you to
+   confirm it. Under **SMTP & API** → **API keys**, create a key and copy it.
+2. In Render, open your service → **Environment** → **Add environment
+   variable**, twice:
+
+   | Name | Value |
+   | --- | --- |
+   | `RA_MAIL_API_KEY` | the key you copied from Brevo |
+   | `RA_MAIL_FROM` | the address you confirmed at Brevo |
+
+3. **Save changes**, wait for the restart, then press **Send test email** on the
+   Outbox page.
+
+That is the whole thing. The app works out from the key itself which service it
+is talking to. (A key from **Resend** works the same way — paste it in and
+nothing else changes.)
+
+### The other way: your own mail server
+
+This needs a **paid** Render instance, or your own PC, where the mail ports are
+open.
+
+1. Open your service in Render → **Environment** (left-hand menu) → **Add
+   environment variable**, five times:
+
+   | Name | Value |
+   | --- | --- |
+   | `RA_SMTP_HOST` | `smtp.gmail.com` |
+   | `RA_SMTP_PORT` | `587` |
+   | `RA_SMTP_USER` | your full Gmail address |
+   | `RA_SMTP_PASSWORD` | the 16-character **app password** (see below) |
+   | `RA_MAIL_FROM` | your full Gmail address again |
+
+2. Click **Save changes**. Render restarts the service on its own — give it a
+   minute.
+3. Open the **Outbox** page. The blue "practice mode" box should be gone,
+   replaced by a green **Sending is switched on**. Type your own address into
+   **Send test email** and press it. It tells you in one line what the mail
+   server said — either "Sent to…" or the exact reason it refused.
+
+**The app password.** Gmail will not accept your normal password from a program.
+Go to **myaccount.google.com** → Security, turn on **2-Step Verification** if it
+is not already on, then search that page for **App passwords**. Create one
+called `ReverseBid`. Google shows you 16 letters — that is the value for
+`RA_SMTP_PASSWORD`. Type it without the spaces. You only see it once; if you
+lose it, delete it and make another.
+
+If your office uses Microsoft 365 instead, the host is `smtp.office365.com`,
+port `587`, and it is your normal work address and password — though many
+organisations block this, and the test email will say so plainly if yours does.
+
+> For a site you are only showing people, leaving practice mode on is the
+> better choice: everything still works, every email is readable in the Outbox,
+> and no stranger clicking around can send mail from your Gmail account.
+
+---
+
 ## Updating it later
 
 Push to GitHub and Render redeploys by itself, within a couple of minutes. From
@@ -151,6 +228,8 @@ Watch progress under **Logs** in Render if you want to see it happen.
 | **The build fails** | Open **Logs** and read the last few red lines. Nine times out of ten it is a file that did not get pushed — check the repository on GitHub has `requirements.txt`, `app/` and `seed.py` in it. |
 | **The page says "Application failed to respond"** | Give it a minute; it is probably waking up. If it persists, open **Logs** — the error is printed there in plain text. |
 | **Signing in does nothing** | You are on an old, cached page. Reload with Ctrl+Shift+R. |
+| **Emails say "Network is unreachable"** | Render's free plan blocks the mail ports. Nothing about your password is wrong. Use the email-service route above — `RA_MAIL_API_KEY` — or move to a paid instance. |
+| **Emails say the sender is not valid** | The address in `RA_MAIL_FROM` has not been confirmed at Brevo. Add it under **Senders** and click the link they email you. |
 
 ---
 
