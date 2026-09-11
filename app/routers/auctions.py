@@ -8,16 +8,23 @@ from sqlalchemy.orm import Session
 
 from .. import audit, engine, notify
 from ..audit import record
+from ..engine import ADDER_FIELDS
 from ..errors import ActionError, FormError
 from ..db import get_db
 from ..emails_util import EmailError, describe, normalise, parse as parse_emails, validate
-from ..models import (Auction, AuctionLine, AuctionStatus, Award, Bid,
+from ..models import (Attachment, Auction, AuctionLine, AuctionStatus, Award, Bid,
                       DecrementType, Item, Message, Participant, Unit, User, Vendor)
 from ..security import buyer_only, current_user
-from ..utils import alias_for, fmt_dt, from_local_string
+from ..utils import alias_for, fmt_dt, fmt_money, fmt_qty, from_local_string
 from ..web import client_ip, redirect, render
 
 router = APIRouter(prefix="/auctions")
+
+#: Every tab the detail page knows how to draw. Anything else falls back to
+#: "bids" rather than rendering a tab strip with nothing underneath it.
+#: tests/test_regressions.py checks this against the template, so a tab added
+#: there and forgotten here cannot go unnoticed.
+TABS = ("bids", "details", "documents", "award", "conversation", "history")
 
 OPEN_TO_VENDOR = (AuctionStatus.SCHEDULED, AuctionStatus.LIVE, AuctionStatus.CLOSED,
                   AuctionStatus.AWARDED, AuctionStatus.CANCELLED)
@@ -207,7 +214,14 @@ def _prefill(form) -> dict:
         "show_rank": form.get("show_rank") == "on",
         "show_lowest_bid": form.get("show_lowest_bid") == "on",
         "hide_bidder_names": form.get("hide_bidder_names") == "on",
+        "compare_landed": form.get("compare_landed") == "on",
         "auto_extend": form.get("auto_extend") == "on",
+        "adders": {int(v): {field: form.get(f"{field}_{v}", "")
+                            for field, _ in ADDER_FIELDS}
+                   | {f"{field}_basis": form.get(f"{field}_basis_{v}", "")
+                      for field, _ in ADDER_FIELDS}
+                   | {"other_label": form.get(f"other_label_{v}", "")}
+                   for v in form.getlist("vendor_ids") if str(v).isdigit()},
         "lines": lines,
         # Anything that is not a plain id came from a tampered or stale page.
         # Skip it here: this function only redraws the form, and it must never
@@ -229,6 +243,8 @@ def _form_screen(request: Request, db: Session, user: User, auction: Auction | N
         "lines": auction.lines if auction else [],
         "selected_vendors": [p.vendor_id for p in auction.participants] if auction else [],
         "overrides": {p.vendor_id: p.notify_emails for p in auction.participants} if auction else {},
+        "saved_adders": ({p.vendor_id: p for p in auction.participants} if auction else {}),
+        "adder_fields": ADDER_FIELDS,
         "prefill": _prefill(form) if form is not None else None,
         "error": error.message if error else "",
         "error_field": error.field if error else "",
@@ -340,6 +356,7 @@ def _apply_settings(auction: Auction, form) -> None:
     auction.show_rank = form.get("show_rank") == "on"
     auction.show_lowest_bid = form.get("show_lowest_bid") == "on"
     auction.hide_bidder_names = form.get("hide_bidder_names") == "on"
+    auction.compare_landed = form.get("compare_landed") == "on"
     auction.auto_extend = form.get("auto_extend") == "on"
     auction.extend_trigger_seconds = int(_number(form, "extend_trigger_minutes",
                                                  "The extension trigger", 2,
@@ -411,7 +428,44 @@ def _sync_participants(db: Session, auction: Auction, form) -> list[Vendor]:
             vendor = db.get(Vendor, part.vendor_id)
             raise FormError(f"{exc} (in the box under "
                             f"{vendor.name if vendor else 'one of the bidders'})", "vendor_ids")
+        _apply_adders(db, part, form, vendor_id in added)
     return [v for v in (db.get(Vendor, vendor_id) for vendor_id in added) if v]
+
+
+def _apply_adders(db: Session, part: Participant, form, is_new: bool) -> None:
+    """Read this bidder's delivered-cost adders off the form.
+
+    A bidder invited for the first time starts from the defaults on their
+    vendor record, so a buyer who has already told us what a supplier's
+    freight costs does not have to type it again.
+    """
+    vendor = db.get(Vendor, part.vendor_id)
+    posted_any = any(form.get(f"{field}_{part.vendor_id}") is not None
+                     for field, _ in ADDER_FIELDS)
+    for field, label in ADDER_FIELDS:
+        name = f"{field}_{part.vendor_id}"
+        basis_name = f"{field}_basis_{part.vendor_id}"
+        if form.get(name) is not None:
+            value = _number(form, name, f"{label} for {vendor.name if vendor else 'a bidder'}",
+                            limit=1e9)
+            basis = (form.get(basis_name) or "unit").strip().lower()
+            if basis not in ("unit", "percent"):
+                basis = "unit"
+            if basis == "percent" and value >= 100:
+                raise FormError(
+                    f"{label} for {vendor.name if vendor else 'a bidder'} is {value:g}% — a "
+                    "percentage that large is almost certainly a typo.", "vendor_ids")
+            setattr(part, field, value)
+            setattr(part, f"{field}_basis", basis)
+        elif is_new and not posted_any and vendor is not None:
+            setattr(part, field, getattr(vendor, f"default_{field}", 0.0) or 0.0)
+            setattr(part, f"{field}_basis",
+                    getattr(vendor, f"default_{field}_basis", "unit") or "unit")
+    label_field = f"other_label_{part.vendor_id}"
+    if form.get(label_field) is not None:
+        part.other_label = (form.get(label_field) or "").strip()[:60]
+    elif is_new and not posted_any and vendor is not None:
+        part.other_label = vendor.default_other_label or ""
 
 
 # ------------------------------------------------------------------ edit
@@ -447,6 +501,13 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
     before = {"title": auction.title, "start": auction.start_at.isoformat(),
               "end": auction.end_at.isoformat()}
     was_start, was_end, was_title = auction.start_at, auction.end_at, auction.title
+    # Everything a bidder prices against, as it stands before the edit. A
+    # bidder told only "the buyer changed something" has to guess what.
+    was_terms = (auction.description or "", auction.terms or "")
+    was_rules = (auction.min_decrement, auction.max_decrement,
+                 auction.decrement_type, bool(auction.compare_landed))
+    was_lines = {engine.line_label(line): (line.qty, line.starting_price)
+                 for line in auction.lines}
     try:
         title = (form.get("title") or "").strip()
         if not title:
@@ -468,6 +529,12 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
                                                    "start": auction.start_at.isoformat(),
                                                    "end": auction.end_at.isoformat()}})
         db.commit()
+        # This session keeps objects alive across a commit, so auction.lines
+        # and auction.participants would still be the ones this edit deleted.
+        # Everything below - publishing, the emails, the change list - reads
+        # them, and quoted the pre-edit items to the bidders.
+        db.expire_all()
+        auction = db.get(Auction, auction_id)
         if form.get("action") == "publish":
             message = _publish_now(db, auction, user, request)
             return redirect(f"/auctions/{auction.id}", "Changes saved. " + message)
@@ -492,6 +559,36 @@ async def update_auction(auction_id: int, request: Request, user: User = Depends
         changes.append(f"Bidding now opens {fmt_dt(auction.start_at)}")
     if was_end != auction.end_at:
         changes.append(f"Bidding now closes {fmt_dt(auction.end_at)}")
+    if was_terms != (auction.description or "", auction.terms or ""):
+        changes.append("The description or the terms have been rewritten — read them again "
+                       "before you bid")
+    if was_rules != (auction.min_decrement, auction.max_decrement,
+                     auction.decrement_type, bool(auction.compare_landed)):
+        changes.append("The bidding rules have changed — the item list on the auction page "
+                       "shows what you may now bid")
+    # Read the rows back from the database: this session does not expire
+    # objects on commit, so auction.lines would still hand back the ones the
+    # edit deleted - and every line change would go unreported.
+    now_lines = {engine.line_label(line): (line.qty, line.starting_price)
+                 for line in db.query(AuctionLine)
+                                .filter(AuctionLine.auction_id == auction.id).all()}
+    for label in was_lines:
+        if label not in now_lines:
+            changes.append(f"“{label}” has been taken off this auction")
+    for label, (qty, price) in now_lines.items():
+        if label not in was_lines:
+            changes.append(f"“{label}” has been added: {fmt_qty(qty)}"
+                           + (f", starting price {fmt_money(price)}" if price else ""))
+            continue
+        was_qty, was_price = was_lines[label]
+        if was_qty != qty:
+            changes.append(f"“{label}”: quantity is now {fmt_qty(qty)} "
+                           f"(it was {fmt_qty(was_qty)})")
+        if was_price != price:
+            changes.append(
+                f"“{label}”: starting price is now "
+                + (fmt_money(price) if price else "open, with no ceiling")
+                + (f" (it was {fmt_money(was_price)})" if was_price else " (there was none)"))
     notify.auction_changed(db, auction, newly_invited, changes)
     told = []
     if newly_invited:
@@ -632,6 +729,50 @@ def close_now(auction_id: int, request: Request, user: User = Depends(buyer_only
     return redirect(f"/auctions/{auction.id}", "Bidding closed. You can award it now.")
 
 
+@router.post("/{auction_id}/more-time")
+async def give_more_time(auction_id: int, request: Request, end_at: str = Form(""),
+                         user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+    """Move a live auction's closing time later.
+
+    A live auction cannot be edited, which used to leave the buyer with no way
+    to give bidders longer - only "close bidding now". The clock can only ever
+    move outwards from here: cutting bidding short without warning is what the
+    Close button is for, and everyone is told either way.
+    """
+    auction = db.get(Auction, auction_id)
+    if not auction:
+        raise HTTPException(404, "That auction does not exist.")
+    back = f"/auctions/{auction.id}"
+    if auction.status != AuctionStatus.LIVE:
+        return redirect(back, "Only a live auction's clock can be moved.", kind="error")
+    try:
+        new_end = from_local_string(end_at)
+    except ValueError:
+        return redirect(back, "That was not a date and time. Use the calendar icon in the box.",
+                        kind="error")
+    now = datetime.utcnow()
+    if new_end <= auction.end_at:
+        return redirect(back, f"That is not later than the current closing time of "
+                              f"{fmt_dt(auction.end_at)}. To finish early, use "
+                              "“Close bidding now” instead.", kind="error")
+    if new_end - now > timedelta(days=30):
+        return redirect(back, "Thirty days is as far out as the clock can go. Pick a nearer "
+                              "closing time.", kind="error")
+    was = auction.end_at
+    auction.end_at = new_end
+    # The closing reminder has to fire again for the new time.
+    auction.ending_soon_notified = False
+    record(db, action="auction.more_time", entity_type="auction", entity_id=auction.id,
+           actor=user, auction_id=auction.id, ip=client_ip(request),
+           detail={"was": was.isoformat(), "now": new_end.isoformat()})
+    db.commit()
+    notify.auction_changed(db, auction, [],
+                           [f"Bidding now closes {fmt_dt(new_end)} "
+                            f"(it was {fmt_dt(was)})"])
+    return redirect(back, f"Bidding now closes {fmt_dt(new_end)}. Every bidder has been "
+                          "emailed the new time.")
+
+
 # ------------------------------------------------------------------ detail
 @router.get("/{auction_id}")
 def detail(auction_id: int, request: Request, tab: str = "bids",
@@ -644,6 +785,11 @@ def detail(auction_id: int, request: Request, tab: str = "bids",
     # competitor the lot.
     if tab == "history" and not user.is_buyer_side:
         raise HTTPException(403, "The history and audit trail is only for the buyer.")
+    # A tab name the page does not know - an old bookmark, a typo, a link from
+    # before a tab was renamed - used to draw the tab strip with nothing at all
+    # underneath it. Fall back to the bidding view.
+    if tab not in TABS:
+        tab = "bids"
     context["tab"] = tab
     if tab == "history":
         context["logs"] = audit.for_auction(db, auction.id)
@@ -653,13 +799,19 @@ def detail(auction_id: int, request: Request, tab: str = "bids",
 
 def build_detail_context(db: Session, auction: Auction, user: User) -> dict:
     lines = []
+    my_adders = engine.adders_for(db, auction, user.vendor_id if user.is_vendor else None)
+    docs = (db.query(Attachment).filter(Attachment.auction_id == auction.id)
+              .order_by(Attachment.created_at.asc()).all())
     for line in auction.lines:
         ranked = engine.best_per_vendor(db, line.id)
-        window = engine.bid_window(db, auction, line)
+        window = engine.bid_window(db, auction, line,
+                                   user.vendor_id if user.is_vendor else None)
         mine = engine.vendor_best(db, line.id, user.vendor_id) if user.is_vendor else None
         lines.append({
             "line": line, "label": engine.line_label(line), "ranked": ranked, "window": window,
             "mine": mine,
+            "docs": [d for d in docs
+                     if d.item_id == line.item_id and _may_see_doc(d, user)],
             "my_rank": engine.vendor_rank(db, line.id, user.vendor_id) if user.is_vendor else None,
             "best": ranked[0] if ranked else None,
             # Every bid, withdrawn ones included: the panels that use this are
@@ -690,7 +842,26 @@ def build_detail_context(db: Session, auction: Auction, user: User) -> dict:
                       .order_by(Bid.created_at.desc()).all() if user.is_vendor else []),
         "seconds_left": max(0, int((auction.end_at - datetime.utcnow()).total_seconds())),
         "AuctionStatus": AuctionStatus,
+        # --- delivered cost
+        "my_adders": my_adders,
+        "adders_for": lambda vendor_id: engine.adders_for(db, auction, vendor_id),
+        "compare_price": engine.compare_price,
+        # --- documents
+        "docs": [d for d in docs if _may_see_doc(d, user)],
+        "auction_docs": [d for d in docs
+                         if d.item_id is None and _may_see_doc(d, user)],
+        "my_docs": [d for d in docs if user.is_vendor and d.vendor_id == user.vendor_id],
     }
+
+
+def _may_see_doc(doc: Attachment, user: User) -> bool:
+    """A buyer sees every document on the auction. A bidder sees the buyer's
+    documents and their own — never another supplier's paperwork."""
+    if user.is_buyer_side:
+        return True
+    if doc.audience == "bidders" and doc.vendor_id is None:
+        return True
+    return doc.vendor_id is not None and doc.vendor_id == user.vendor_id
 
 
 def _group_awards(awards) -> dict:

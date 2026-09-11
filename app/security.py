@@ -72,6 +72,30 @@ def safe_next(target: str | None, fallback: str = "/") -> str:
     return value
 
 
+# ------------------------------------------------------------------ invitations
+_invite = URLSafeTimedSerializer(SECRET_KEY, salt="ra-invite")
+
+
+def make_invite(email: str, role: str, vendor_id: int | None = None) -> str:
+    """A signed link that lets one address set a password, once.
+
+    Suppliers never choose which vendor they belong to: the buyer has already
+    created the vendor record, and this token is what binds the new login to
+    it. Nothing is stored, so an unused invitation simply expires.
+    """
+    return _invite.dumps({"e": email.strip().lower(), "r": role, "v": vendor_id})
+
+
+def read_invite(token: str, max_age_days: int) -> dict | None:
+    try:
+        data = _invite.loads(token, max_age=max_age_days * 86400)
+    except (BadSignature, Exception):
+        return None
+    if not isinstance(data, dict) or not data.get("e") or data.get("r") not in ("vendor", "buyer"):
+        return None
+    return data
+
+
 # ------------------------------------------------------------------ CSRF
 def new_csrf_token() -> str:
     return secrets.token_urlsafe(32)
@@ -118,6 +142,8 @@ async def csrf_protect(request: Request) -> None:
 # ------------------------------------------------------------------ sign-in throttle
 _ATTEMPT_WINDOW = 15 * 60
 _MAX_ATTEMPTS = 10
+#: The per-account bucket, which every computer shares.
+_MAX_PER_ACCOUNT = 50
 _attempts: dict[str, list[float]] = {}
 _attempts_lock = threading.Lock()
 
@@ -126,13 +152,19 @@ def _prune(stamps: list[float], now: float) -> list[float]:
     return [t for t in stamps if now - t < _ATTEMPT_WINDOW]
 
 
-def login_blocked(key: str) -> int:
-    """Seconds the caller must wait, or 0 when they may try again now."""
+def login_blocked(key: str, limit: int = _MAX_ATTEMPTS) -> int:
+    """Seconds the caller must wait, or 0 when they may try again now.
+
+    ``limit`` is deliberately looser for the per-account bucket: that one
+    exists to blunt a guesser spread across many addresses, and a tight limit
+    on it would let anyone lock a colleague out by typing their address and
+    ten wrong passwords.
+    """
     now = time.time()
     with _attempts_lock:
         stamps = _prune(_attempts.get(key, []), now)
         _attempts[key] = stamps
-        if len(stamps) < _MAX_ATTEMPTS:
+        if len(stamps) < limit:
             return 0
         return max(1, int(_ATTEMPT_WINDOW - (now - stamps[0])))
 

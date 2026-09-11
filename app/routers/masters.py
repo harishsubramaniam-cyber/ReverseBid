@@ -2,13 +2,17 @@
 used from inside the auction form so the buyer never loses their place."""
 from __future__ import annotations
 
+import math
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..audit import record
 from ..db import get_db
 from ..emails_util import EmailError, describe, normalise, parse, validate
+from ..engine import ADDER_FIELDS
 from ..errors import ActionError as MasterProblem
 from ..models import Item, Unit, User, Vendor
 from ..security import buyer_only, current_user
@@ -43,6 +47,37 @@ def masters_home(request: Request, tab: str = "vendors", q: str = "",
     return _masters_screen(request, db, user, tab, q)
 
 
+# ------------------------------------------------------------------ delivered cost
+def _default_adders(form) -> dict:
+    """The vendor's usual freight, duty and packaging.
+
+    These only pre-fill the auction form. Each auction keeps its own copy, so
+    changing a vendor's usual freight never rewrites what a past auction was
+    ranked on.
+    """
+    values: dict = {}
+    for field, label in ADDER_FIELDS:
+        raw = (form.get(f"default_{field}") or "").strip()
+        if raw:
+            try:
+                amount = float(raw)
+            except ValueError:
+                raise MasterProblem(f"{label} has to be a number — “{raw}” is not.")
+            if not math.isfinite(amount) or amount < 0:
+                raise MasterProblem(f"{label} cannot be negative, and has to be a real number.")
+            basis = (form.get(f"default_{field}_basis") or "unit").strip().lower()
+            if basis not in ("unit", "percent"):
+                basis = "unit"
+            if basis == "percent" and amount >= 100:
+                raise MasterProblem(f"{label} of {amount:g}% is almost certainly a typo.")
+            values[f"default_{field}"] = amount
+            values[f"default_{field}_basis"] = basis
+    label_text = (form.get("default_other_label") or "").strip()
+    if label_text:
+        values["default_other_label"] = label_text[:60]
+    return values
+
+
 # ------------------------------------------------------------------ create
 def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Vendor:
     """Create (or reuse) a vendor. ``email`` may itself be a list of addresses -
@@ -65,6 +100,7 @@ def create_vendor(db: Session, user: User, name: str, email: str, **extra) -> Ve
         # That address is already on file. Update the record rather than
         # quietly discarding what was just typed, and bring it back from the
         # archive so it shows up in the auction form's bidder list.
+        existing.was_named = existing.name if name and name != existing.name else ""
         existing.name = name or existing.name
         for field, value in extra.items():
             if value:
@@ -99,6 +135,15 @@ def create_item(db: Session, user: User, name: str, **extra) -> Item:
                             "it again.")
     if unit_id and not db.get(Unit, int(unit_id)):
         raise MasterProblem("That unit no longer exists. Pick another one.")
+    # Two items with the same name give the auction form two identical choices
+    # and nobody can tell which is which afterwards.
+    twin = db.query(Item).filter(func.lower(Item.name) == name.lower()).first()
+    if twin:
+        raise MasterProblem(
+            f"“{twin.name}” is already on your item list"
+            + (" (archived — restore it instead of adding it again)."
+               if not twin.is_active else ". Pick it from the list rather than adding it twice.")
+        )
     item = Item(name=name, created_by_id=user.id,
                 default_unit_id=int(unit_id) if unit_id else None,
                 **{k: (v or "") for k, v in extra.items()})
@@ -116,6 +161,7 @@ def create_unit(db: Session, user: User, code: str, name: str = "") -> Unit:
         raise MasterProblem("A unit needs a short code, like KG.")
     existing = db.query(Unit).filter(Unit.code == code).first()
     if existing:
+        existing.reused = True
         return existing
     unit = Unit(code=code, name=name.strip())
     db.add(unit)
@@ -127,20 +173,31 @@ def create_unit(db: Session, user: User, code: str, name: str = "") -> Unit:
 
 
 @router.post("/vendors")
-def post_vendor(request: Request, name: str = Form(""), email: str = Form(""),
-                extra_emails: str = Form(""), code: str = Form(""),
-                contact_person: str = Form(""), phone: str = Form(""),
-                gstin: str = Form(""), address: str = Form(""),
-                user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+async def post_vendor(request: Request, name: str = Form(""), email: str = Form(""),
+                      extra_emails: str = Form(""), code: str = Form(""),
+                      contact_person: str = Form(""), phone: str = Form(""),
+                      gstin: str = Form(""), address: str = Form(""),
+                      user: User = Depends(buyer_only), db: Session = Depends(get_db)):
+    form = await request.form()
     try:
         vendor = create_vendor(db, user, name, email, extra_emails=extra_emails, code=code,
                                contact_person=contact_person, phone=phone, gstin=gstin,
-                               address=address)
+                               address=address, **_default_adders(form))
         count = 1 + len(parse(vendor.extra_emails))
-        note = ("Updated the existing vendor with that email address."
-                if getattr(vendor, "reused", False) else "saved.")
+        addresses = f"Emails go to {count} address(es)."
+        if getattr(vendor, "reused", False):
+            # That email address was already on file, so this updated the
+            # supplier we had rather than making a second copy of them. Say so
+            # plainly, and say if the name changed - it changes on every
+            # auction they are already on.
+            renamed = getattr(vendor, "was_named", "")
+            message = (f"“{vendor.email}” was already on file, so we updated that supplier "
+                       f"instead of adding a second one. ")
+            message += (f"It was called “{renamed}” and is now “{vendor.name}”, everywhere it "
+                        f"appears. " if renamed else f"They are still “{vendor.name}”. ")
+            return redirect("/masters?tab=vendors", message + addresses)
         return redirect("/masters?tab=vendors",
-                        f"Vendor “{vendor.name}” {note} Emails go to {count} address(es).")
+                        f"Vendor “{vendor.name}” saved. {addresses}")
     except MasterProblem as exc:
         db.rollback()
         return _masters_screen(request, db, user, "vendors", error=str(exc),
@@ -205,6 +262,13 @@ def post_unit(request: Request, code: str = Form(""), name: str = Form(""),
               user: User = Depends(buyer_only), db: Session = Depends(get_db)):
     try:
         unit = create_unit(db, user, code, name)
+        if getattr(unit, "reused", False):
+            # Codes are held upper-cased, so "kg" and "KG" are the same unit.
+            # Saying "saved" would leave the buyer looking for a second row.
+            return redirect("/masters?tab=units",
+                            f"“{unit.code}” already exists"
+                            + (f" — {unit.name}." if unit.name else ".")
+                            + " Nothing was added.")
         return redirect("/masters?tab=units", f"Unit “{unit.code}” saved.")
     except MasterProblem as exc:
         db.rollback()

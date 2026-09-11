@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from .. import engine
 from ..db import get_db
 from ..models import Auction, AuctionStatus, Award, Bid, Participant, User, Vendor
 from ..security import current_user
+from ..utils import TZ
 from ..web import render
 
 router = APIRouter()
@@ -59,8 +60,13 @@ def _buyer_home(request: Request, user: User, db: Session):
                   user=user, db=db, help_key="dashboard")
 
 
+def _naive_utc(value: datetime) -> datetime:
+    """A local, tz-aware instant as the naive UTC the database stores."""
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _monthly_savings(db: Session, months: int = 6):
-    first = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    first = datetime.now(TZ).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     starts = [first]
     for _ in range(months - 1):
         starts.append((starts[-1] - timedelta(days=1)).replace(day=1))
@@ -68,8 +74,8 @@ def _monthly_savings(db: Session, months: int = 6):
     for start in reversed(starts):
         end = (start + timedelta(days=32)).replace(day=1)
         rows = (db.query(Auction).filter(Auction.status == AuctionStatus.AWARDED,
-                                         Auction.awarded_at >= start,
-                                         Auction.awarded_at < end).all())
+                                         Auction.awarded_at >= _naive_utc(start),
+                                         Auction.awarded_at < _naive_utc(end)).all())
         total = sum(engine.auction_summary(db, a)["savings"] for a in rows)
         buckets.append({"label": start.strftime("%b"), "value": total, "count": len(rows)})
     return buckets

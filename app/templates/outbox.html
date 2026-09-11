@@ -1,14 +1,56 @@
 {% extends "base.html" %}
-{% block title %}Email outbox — {{ app_name }}{% endblock %}
+{% block title %}Email outbox — {{ app_name }}{% if waiting %}
+{# Anything queued settles within a minute or two; reload until it has, so the
+   page never sits showing a status that has since changed. #}
+<script>setTimeout(function () { location.reload(); }, 8000);</script>
+{% endif %}
+{% endblock %}
 {% block wrapclass %}wide{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><h1>Email outbox</h1>
   <p class="sub">Every message the platform produced, newest first.</p></div></div>
 
-{% if not email_enabled %}
-<div class="alert info"><div><b>Preview mode.</b> No mail server is configured, so messages are
-  saved here (and as .eml files) instead of being sent. Set <code>RA_SMTP_HOST</code> and friends
-  in your environment file to switch on real sending — nothing else changes.</div></div>
+{% if not mail.enabled %}
+<div class="alert info"><div><b>Practice mode — nothing is actually being sent.</b>
+  No mail server is set, so every message is saved here and to <code>data\outbox\</code> as a
+  .eml file you can open. That is deliberate: it lets you rehearse a whole auction without
+  emailing real suppliers.
+  <div class="small" style="margin-top:6px">To send for real, put your mail server settings in
+    <code>{{ mail.env_file }}</code>{% if not mail.env_file_found %} — <b>that file does not
+    exist yet</b>; copy <code>.env.example</code> to <code>.env</code>{% endif %} and restart the
+    app. The settings are read only when it starts.</div></div></div>
+{% else %}
+<div class="alert ok"><div><b>Sending is switched on.</b>
+  <div class="small" style="margin-top:6px">Through <b>{{ mail.host }}</b> port {{ mail.port }}
+    ({{ mail.security }}), signing in as <b>{{ mail.user or 'no username' }}</b>{% if not
+    mail.password_set %} — <b>no password is set</b>{% endif %}, sending from
+    <b>{{ mail['from'] }}</b>.</div></div></div>
+{% endif %}
+
+<div class="card tight">
+  <div class="grow"><b>Check it works</b>
+    <p class="muted small" style="margin:2px 0 8px">Sends one message right now and tells you
+      exactly what the mail server said — no auction, no waiting.</p></div>
+  <form method="post" action="/outbox/test" style="display:flex;gap:10px;align-items:flex-end;
+        flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div style="flex:1;min-width:220px"><label for="to_email">Send a test email to</label>
+      <input id="to_email" type="email" name="to_email" value="{{ user.email }}"></div>
+    <button class="btn" type="submit">Send test email</button>
+  </form>
+</div>
+
+{% if waiting or stuck %}
+<div class="alert {{ 'warn' if waiting else 'error' }}"><div>
+  {% if waiting %}<b>{{ waiting }} message(s) still going out.</b> Each waits its turn, and a
+    mail server that does not answer takes up to 30 seconds to give up, so a few can sit at
+    <b>queued</b> for a minute. This page refreshes itself until they settle.{% endif %}
+  {% if stuck %}{% if waiting %}<br>{% endif %}<b>{{ stuck }} could not be sent.</b> The reason is
+    printed under each one below.{% endif %}
+  <form method="post" action="/outbox/retry" style="margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn ghost sm" type="submit">Try them again</button></form>
+</div></div>
 {% endif %}
 
 <form method="get" class="card tight" style="display:flex;gap:10px;align-items:flex-end">
@@ -24,10 +66,17 @@
       <td class="small">{{ m.to_name }}<div class="muted">{{ m.to_email }}</div></td>
       <td><a href="/outbox/{{ m.id }}">{{ m.subject }}</a></td>
       <td><span class="pill closed">{{ m.event or '—' }}</span></td>
-      <td><span class="pill {{ 'good' if m.status in ('sent','outbox') else ('warn' if m.status == 'queued' else 'bad') }}">{{ m.status }}</span>
+      <td><span class="pill {{ 'good' if m.status in ('sent','outbox') else ('warn' if m.status == 'queued' else 'bad') }}">{{ {'outbox': 'saved here', 'queued': 'going out…'}.get(m.status, m.status) }}</span>
         {% if m.error %}<div class="muted small">{{ m.error }}</div>{% endif %}</td>
       <td><a class="btn ghost sm" href="/outbox/{{ m.id }}">Open</a></td></tr>
   {% endfor %}
-  {% if not rows %}<tr><td colspan="6" class="empty">Nothing sent yet.</td></tr>{% endif %}
+  {% if not rows %}<tr><td colspan="6" class="empty">
+    {%- if q %}No emails match “{{ q }}”. <a href="/outbox">Show everything</a>.
+    {%- else %}Nothing sent yet.{% endif %}</td></tr>{% endif %}
 </tbody></table></div>
+{% if waiting %}
+{# Anything queued settles within a minute or two; reload until it has, so the
+   page never sits showing a status that has since changed. #}
+<script>setTimeout(function () { location.reload(); }, 8000);</script>
+{% endif %}
 {% endblock %}

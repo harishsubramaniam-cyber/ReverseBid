@@ -23,6 +23,18 @@ from app.utils import alias_for
 PASSWORD = "demo1234"
 random.seed(7)
 
+#: Freight and duty as the buyer has them on file for each supplier. One is
+#: local, one is three states away - which is the whole point of comparing on
+#: the delivered price.
+ADDERS = {
+    "Sunrise Packaging Pvt Ltd": {"default_freight": 0.9, "default_freight_basis": "unit"},
+    "Deccan Industrial Supplies": {"default_freight": 2.4, "default_freight_basis": "unit",
+                                   "default_packaging": 0.35},
+    "Nagpur Metal Works": {"default_freight": 3.1, "default_freight_basis": "unit"},
+    "Coastal Logistics & Trading": {"default_freight": 1.0, "default_freight_basis": "unit",
+                                    "default_duty": 2.0, "default_duty_basis": "percent"},
+}
+
 
 def reset() -> None:
     """Start from nothing. For SQLite we remove the file - dropping the tables
@@ -65,7 +77,10 @@ def build() -> None:
     vendors, vendor_users = [], []
     for name, email, contact, extra in vendor_specs:
         vendor = Vendor(name=name, email=email, contact_person=contact, extra_emails=extra,
-                        code=name.split()[0][:4].upper(), created_by_id=buyer.id)
+                        code=name.split()[0][:4].upper(), created_by_id=buyer.id,
+                        # What it costs to get their goods here. Only used by an
+                        # auction that is compared on the delivered price.
+                        **ADDERS.get(name, {}))
         db.add(vendor)
         db.flush()
         user = User(name=contact, email=email, role=Role.VENDOR, vendor_id=vendor.id,
@@ -73,6 +88,14 @@ def build() -> None:
         db.add(user)
         vendors.append(vendor)
         vendor_users.append(user)
+
+    #  A supplier the buyer has added but who has never signed in - the normal
+    #  state of a new vendor. They are invited to the scheduled auction, and
+    #  their invitation email carries the link that sets their password.
+    not_yet_joined = Vendor(name="Bharat Fasteners", email="sales@bharatfast.example",
+                            contact_person="Anil Gupta", code="BHAR",
+                            created_by_id=buyer.id, default_freight=1.5)
+    db.add(not_yet_joined)
     db.flush()
 
     # ---------------------------------------------------------------- masters
@@ -106,6 +129,7 @@ def build() -> None:
     def make_auction(title, status, start, end, line_specs, **kwargs) -> Auction:
         counter["n"] += 1
         overrides = kwargs.pop("overrides", {})
+        kwargs_extra = {"also_invite": kwargs.pop("also_invite", [])}
         auction = Auction(
             reference=f"RA-{start.year}-{counter['n']:04d}", title=title,
             cc_emails=kwargs.pop("cc_emails", ""),
@@ -127,10 +151,20 @@ def build() -> None:
         for item, unit, price, qty in line_specs:
             db.add(AuctionLine(auction_id=auction.id, item_id=item.id, unit_id=unit.id,
                                qty=qty, starting_price=price))
-        for index, vendor in enumerate(vendors):
-            db.add(Participant(auction_id=auction.id, vendor_id=vendor.id,
+        invited = list(vendors) + kwargs_extra.get("also_invite", [])
+        for index, vendor in enumerate(invited):
+            part = Participant(auction_id=auction.id, vendor_id=vendor.id,
                                alias=alias_for(index),
-                               notify_emails=overrides.get(vendor.id, "")))
+                               notify_emails=overrides.get(vendor.id, ""))
+            if auction.compare_landed:
+                # Each auction keeps its own copy of the delivered costs, taken
+                # from the vendor record at the moment they were invited.
+                for attr, _ in (("freight", ""), ("duty", ""), ("packaging", ""),
+                                ("other", "")):
+                    setattr(part, attr, getattr(vendor, f"default_{attr}", 0.0) or 0.0)
+                    setattr(part, f"{attr}_basis",
+                            getattr(vendor, f"default_{attr}_basis", "unit") or "unit")
+            db.add(part)
         db.flush()
         return auction
 
@@ -217,9 +251,15 @@ def build() -> None:
     simulate(live, rounds=2)
 
     # ------------------------------------------------------- 4: opens later today
-    make_auction("Gear oil EP-320 — opens later today", AuctionStatus.SCHEDULED,
+    make_auction("Gear oil EP-320 — delivered price, opens later today",
+                 AuctionStatus.SCHEDULED,
                  now + timedelta(hours=4), now + timedelta(hours=6), [items[4]],
-                 description="Invitations have gone out. Bidding opens at the time shown.")
+                 description="Compared on the delivered price: each bidder's freight and duty "
+                             "is added to what they bid, so a local supplier and a distant one "
+                             "are judged like for like. Bharat Fasteners has been invited but "
+                             "has never signed in — their invitation carries the link that "
+                             "sets their password.",
+                 compare_landed=True, also_invite=[not_yet_joined])
 
     # ------------------------------------------------------- 5: a draft, with no ceiling set
     draft = make_auction("Hydraulic hoses — draft, no ceiling set", AuctionStatus.DRAFT,
@@ -245,6 +285,9 @@ def build() -> None:
     print(f"  Buyer      buyer@demo.in      / {PASSWORD}")
     for _, email, contact, _extra in vendor_specs:
         print(f"  Bidder     {email:<18} / {PASSWORD}   ({contact})")
+    print("\n  Bharat Fasteners (sales@bharatfast.example) has no password yet, on purpose.")
+    print("  Open the Outbox as the buyer, find their invitation, and follow the link in it")
+    print("  to see how a real supplier gets in.")
     print(f"\nDatabase: {config.DATABASE_URL}\nNow run:  uvicorn app.main:app --reload\n")
 
 

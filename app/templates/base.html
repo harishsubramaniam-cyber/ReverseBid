@@ -27,6 +27,7 @@
     <g id="i-box" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 10 3l7 3.5v7L10 17l-7-3.5z"/><path d="M3 6.5 10 10l7-3.5M10 10v7"/></g>
     <g id="i-plus" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4.5v11M4.5 10h11"/></g>
     <g id="i-clock" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.2"/><path d="M10 5.8V10l3 1.8"/></g>
+    <g id="i-more" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4.5 10h.01M10 10h.01M15.5 10h.01"/></g>
   </defs>
 </svg>
 
@@ -49,6 +50,8 @@
     <svg><use href="#i-spark"/></svg><span class="label">Ask</span></button>
   <a class="iconbtn" href="/notifications" title="Alerts" aria-label="Alerts">
     <svg><use href="#i-bell"/></svg>{% if unread_count %}<span class="badge-dot">{{ unread_count }}</span>{% endif %}</a>
+  <a class="iconbtn" href="/team" title="Your team">
+    <svg><use href="#i-people"/></svg><span class="label">Team</span></a>
   {# Signing out is a POST, so no other page can sign someone out with a link. #}
   <form method="post" action="/logout" style="display:inline-flex">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -67,9 +70,10 @@
   {% endif %}
   {% if user and not email_enabled and user.is_buyer_side and request.url.path == '/' %}
     <div class="alert info"><svg><use href="#i-info"/></svg>
-      <div>Emails are in <b>preview mode</b>. Every message is saved to the
+      <div><b>Nothing is actually being emailed yet.</b> Every message is saved to the
       <a href="/outbox">Outbox</a> instead of being sent, so you can see exactly what your
-      bidders would receive. Add your mail server details to switch on real sending.</div></div>
+      bidders would receive. The Outbox page shows how to switch real sending on, and has a
+      <b>Send test email</b> button to check it.</div></div>
   {% endif %}
   {% block content %}{% endblock %}
 </main>
@@ -80,8 +84,38 @@
   <a href="/auctions" class="{{ 'on' if request.url.path.startswith('/auctions') }}"><svg><use href="#i-gavel"/></svg>Auctions</a>
   {% if user.is_buyer_side %}<a href="/reports" class="{{ 'on' if request.url.path.startswith('/reports') }}"><svg><use href="#i-chart"/></svg>Reports</a>{% endif %}
   <a href="/notifications" class="{{ 'on' if request.url.path.startswith('/notifications') }}"><svg><use href="#i-bell"/></svg>Alerts</a>
-  <a href="#" onclick="openDrawer('help-drawer');return false"><svg><use href="#i-help"/></svg>Help</a>
+  {# The top navigation is hidden on a phone, so everything it holds has to be
+     reachable from here - otherwise Vendors, the Outbox and the Team page can
+     only be got at by typing the address. #}
+  <a href="#" onclick="openDrawer('more-drawer');return false"><svg><use href="#i-more"/></svg>More</a>
 </nav>
+
+<aside class="drawer" id="more-drawer" aria-label="Everything else">
+  <header><h3>Everywhere else</h3>
+    <button class="iconbtn" onclick="closeDrawers()" aria-label="Close">✕</button></header>
+  <div class="body">
+    <div class="drawer-links">
+      <a href="/">Dashboard</a>
+      <a href="/auctions">Auctions</a>
+      {% if user.is_buyer_side %}
+        <a href="/auctions/new">New auction</a>
+        <a href="/masters">Vendors &amp; items</a>
+        <a href="/reports">Reports</a>
+        <a href="/outbox">Email outbox</a>
+      {% endif %}
+      <a href="/notifications">Alerts</a>
+      <a href="/team">Your team</a>
+      <a href="#" onclick="closeDrawers();openDrawer('help-drawer');return false">Help for this screen</a>
+      <a href="#" onclick="closeDrawers();openDrawer('ask-drawer');return false">Ask the assistant</a>
+    </div>
+  </div>
+  <div class="foot">
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn ghost block" type="submit">Sign out {{ first_name(user.name) }}</button>
+    </form>
+  </div>
+</aside>
 
 <div class="scrim" id="scrim" onclick="closeDrawers()"></div>
 
@@ -113,7 +147,7 @@
   <header><h3>Ask about anything</h3>
     <button class="iconbtn" onclick="closeDrawers()" aria-label="Close">✕</button></header>
   <div class="body" id="ask-log">
-    <div class="chat-msg bot">Hello {{ user.name.split()[0] }} — ask me anything about running or
+    <div class="chat-msg bot">Hello {{ first_name(user.name) }} — ask me anything about running or
       bidding in a reverse auction. I answer in plain language.</div>
     <div>
       <span class="chip" onclick="askThis('What is a reverse auction?')">What is a reverse auction?</span>

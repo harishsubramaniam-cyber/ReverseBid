@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import datetime
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -17,6 +18,19 @@ from sqlalchemy.orm import Session
 from . import config, engine
 from .models import Auction, AuctionStatus, Award
 from .utils import fmt_dt, fmt_money, fmt_qty
+
+def safe(value) -> str:
+    """Text on its way into a reportlab Paragraph.
+
+    Paragraph parses what it is given as mini-XML, and the styling in this file
+    relies on that (``<b>``, ``<br/>``). Anything a person typed has to be
+    escaped first: an auction called "Bolts <M8> galvanised" printed as "Bolts
+    galvanised" - a different name from the one the CSV and the screen showed -
+    and one called "Grade <b> steel" made the PDF for the whole period fail
+    with a parse error while every other view worked.
+    """
+    return _xml_escape("" if value is None else str(value))
+
 
 ACCENT = colors.HexColor("#1d4ed8")
 LIGHT = colors.HexColor("#f1f5f9")
@@ -75,18 +89,26 @@ def total_savings(db: Session, start: datetime, end: datetime,
         awardees = sorted({a.vendor.name for a in summary["awards"]})
         if auction.status != AuctionStatus.AWARDED:
             awarded_only = False
+        # Every figure in a row is printed to the paisa, so round to the paisa
+        # BEFORE deriving the savings. Formatting the three independently made
+        # a row on a fractional quantity contradict the report's own footnote:
+        # 7768.62 - 6852.25 printed beside a savings column saying 916.38.
+        baseline = round(summary["baseline"], 2)
+        final = round(summary["final_value"], 2)
+        savings = round(baseline - final, 2)
         rows.append({
             "auction": auction, "reference": auction.reference, "title": auction.title,
             "date": auction.awarded_at or auction.closed_at or auction.start_at,
-            "baseline": summary["baseline"], "final": summary["final_value"],
-            "savings": summary["savings"], "savings_pct": summary["savings_pct"],
+            "baseline": baseline, "final": final,
+            "savings": savings,
+            "savings_pct": (savings / baseline * 100) if baseline else 0.0,
             "bids": summary["total_bids"], "bidders": summary["active_bidders"],
             "awardees": ", ".join(awardees) or "—",
         })
     totals = {
-        "baseline": sum(r["baseline"] for r in rows),
-        "final": sum(r["final"] for r in rows),
-        "savings": sum(r["savings"] for r in rows),
+        "baseline": round(sum(r["baseline"] for r in rows), 2),
+        "final": round(sum(r["final"] for r in rows), 2),
+        "savings": round(sum(r["savings"] for r in rows), 2),
         "count": len(rows),
     }
     totals["savings_pct"] = (totals["savings"] / totals["baseline"] * 100) if totals["baseline"] else 0.0
@@ -259,15 +281,15 @@ def savings_pdf(data: dict) -> bytes:
     rows = [["Reference", "Auction", "Awarded on" if awarded_only else "Decided on",
              "Bidders", "Bids", "Baseline", "Final", "Savings", "%", "Awarded to"]]
     for row in data["rows"]:
-        rows.append([Paragraph(row["reference"], st["cell"]),
-                     Paragraph(row["title"], st["cell"]),
+        rows.append([Paragraph(safe(row["reference"]), st["cell"]),
+                     Paragraph(safe(row["title"]), st["cell"]),
                      Paragraph(fmt_dt(row["date"], False), st["cell"]),
                      str(row["bidders"]), str(row["bids"]),
                      Paragraph(fmt_money(row["baseline"], False), st["right"]),
                      Paragraph(fmt_money(row["final"], False), st["right"]),
                      Paragraph(fmt_money(row["savings"], False), st["right"]),
                      f"{row['savings_pct']:.1f}",
-                     Paragraph(row["awardees"], st["cell"])])
+                     Paragraph(safe(row["awardees"]), st["cell"])])
     rows.append(["", Paragraph("<b>TOTAL</b>", st["cell"]), "", "", "",
                  Paragraph(f"<b>{fmt_money(totals['baseline'], False)}</b>", st["right"]),
                  Paragraph(f"<b>{fmt_money(totals['final'], False)}</b>", st["right"]),
@@ -293,8 +315,8 @@ def auction_pdf(data: dict) -> bytes:
     st = _styles()
     auction, summary = data["auction"], data["summary"]
     story = [
-        Paragraph(f"Auction Summary — {auction.reference}", st["title"]),
-        Paragraph(f"{auction.title} &nbsp;·&nbsp; status {auction.status.value} "
+        Paragraph(f"Auction Summary — {safe(auction.reference)}", st["title"]),
+        Paragraph(f"{safe(auction.title)} &nbsp;·&nbsp; status {auction.status.value} "
                   f"&nbsp;·&nbsp; generated {fmt_dt(datetime.utcnow())}", st["sub"]),
     ]
     facts = [[
@@ -324,7 +346,7 @@ def auction_pdf(data: dict) -> bytes:
         # Every multi-value cell is a Paragraph: a plain string in a reportlab
         # table shows "<br/>" as text rather than breaking the line.
         rows.append([
-            Paragraph(entry["label"], st["cell"]),
+            Paragraph(safe(entry["label"]), st["cell"]),
             Paragraph(fmt_qty(line.qty), st["right"]),
             Paragraph(fmt_money(line.starting_price, False) if line.has_ceiling else "—",
                       st["right"]),
@@ -333,7 +355,7 @@ def auction_pdf(data: dict) -> bytes:
             Paragraph(fmt_money(entry["lowest"].unit_price, False) if entry["lowest"]
                       else "—", st["right"]),
             Paragraph(fmt_money(entry["result"]["savings"], False), st["right"]),
-            Paragraph("<br/>".join(a.vendor.name for a in awards) or "—", st["cell"]),
+            Paragraph("<br/>".join(safe(a.vendor.name) for a in awards) or "—", st["cell"]),
             Paragraph("<br/>".join(fmt_qty(a.qty) for a in awards) or "—", st["right"]),
             Paragraph("<br/>".join(fmt_money(a.unit_price, False) for a in awards) or "—",
                       st["right"]),
@@ -346,8 +368,8 @@ def auction_pdf(data: dict) -> bytes:
     all_bids = [(b, entry["label"]) for entry in data["lines"] for b in entry["history"]]
     for bid, label in sorted(all_bids, key=lambda pair: pair[0].created_at):
         bid_rows.append([Paragraph(fmt_dt(bid.created_at, False), st["cell"]),
-                         Paragraph(label, st["cell"]),
-                         Paragraph(bid.vendor.name, st["cell"]),
+                         Paragraph(safe(label), st["cell"]),
+                         Paragraph(safe(bid.vendor.name), st["cell"]),
                          Paragraph(fmt_money(bid.unit_price, False), st["right"]),
                          Paragraph(fmt_money(bid.total, False), st["right"]),
                          "Withdrawn" if bid.withdrawn else "Live"])

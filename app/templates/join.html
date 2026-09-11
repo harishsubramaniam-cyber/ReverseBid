@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Set your password — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="auth">
+  <div style="text-align:center;margin-bottom:20px">
+    <div class="brand" style="justify-content:center;font-size:1.3rem"><span class="dot">R</span> {{ app_name }}</div>
+    <p class="muted small" style="margin-top:6px">Reverse auctions — the buyer sets the ceiling, suppliers bid it down.</p>
+  </div>
+
+  {% if expired %}
+  <div class="card">
+    <h1>That link has expired</h1>
+    <p>{{ message }}</p>
+    <div class="btn-row" style="margin-top:14px">
+      <a class="btn" href="/login">Go to sign in</a>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="card">
+    <h1>Set your password</h1>
+    {% if vendor %}
+      <p class="muted small">You are joining as <b>{{ vendor.name }}</b>. Once your password is
+        set you can see the auctions you have been invited to and place bids.</p>
+    {% else %}
+      <p class="muted small">You are joining the buying team. Once your password is set you can
+        create and run auctions.</p>
+    {% endif %}
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+
+    <form method="post" action="/join/{{ token }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label>Your email</label>
+        <input value="{{ email }}" disabled>
+        <p class="hint">This invitation was sent to this address, so it cannot be changed here.</p></div>
+      <div class="field"><label for="name">Your name</label>
+        <input id="name" name="name" value="{{ name or '' }}" required autofocus>
+        <p class="hint">What the buyer will see beside your messages.</p></div>
+      <div class="field"><label for="password">Choose a password</label>
+        <input id="password" type="password" name="password" minlength="6" required>
+        <p class="hint">At least 6 characters.</p></div>
+      <div class="field"><label for="confirm">Type it again</label>
+        <input id="confirm" type="password" name="confirm" minlength="6" required></div>
+      <button class="btn block" type="submit">Set my password</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

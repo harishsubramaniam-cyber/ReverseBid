@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from .. import mailer
 from ..db import get_db
+from ..emails_util import EmailError, validate
 from ..models import EmailMessage, Notification, User
 from ..security import buyer_side, current_user
 from ..web import redirect, render
@@ -39,8 +41,40 @@ def outbox(request: Request, q: str = "", user: User = Depends(buyer_side),
         query = query.filter(EmailMessage.subject.ilike(like) |
                              EmailMessage.to_email.ilike(like))
     rows = query.order_by(EmailMessage.created_at.desc()).limit(200).all()
-    return render(request, "outbox.html", {"rows": rows, "q": q}, user=user, db=db,
-                  help_key="outbox")
+    return render(request, "outbox.html",
+                  {"rows": rows, "q": q, "mail": mailer.settings_summary(),
+                   "waiting": db.query(EmailMessage).filter(
+                       EmailMessage.status == "queued").count(),
+                   "stuck": db.query(EmailMessage).filter(
+                       EmailMessage.status == "failed").count()},
+                  user=user, db=db, help_key="outbox")
+
+
+@router.post("/outbox/test")
+def outbox_test(request: Request, to_email: str = Form(""),
+                user: User = Depends(buyer_side), db: Session = Depends(get_db)):
+    """Send one message right now and report the mail server's own answer.
+
+    Without this, checking the settings meant publishing a real auction to real
+    suppliers and waiting to see whether anything arrived.
+    """
+    address = (to_email or "").strip() or user.email
+    try:
+        addresses = validate(address, field="email address")
+    except EmailError as exc:
+        return redirect("/outbox", str(exc), kind="error")
+    ok, message = mailer.send_test(addresses[0])
+    return redirect("/outbox", message, kind="ok" if ok else "error")
+
+
+@router.post("/outbox/retry")
+def outbox_retry(user: User = Depends(buyer_side), db: Session = Depends(get_db)):
+    """Try everything queued or failed again, without a restart."""
+    count = mailer.requeue_pending()
+    if not count:
+        return redirect("/outbox", "Nothing is waiting — every message has been dealt with.")
+    return redirect("/outbox", f"Trying {count} message(s) again. Reload in a few seconds to "
+                               "see how they got on.")
 
 
 @router.get("/outbox/{message_id}")

@@ -38,7 +38,9 @@
         <td class="num mono" style="color:var(--good)">{{ fmt_money(entry.result.savings) }}</td>
         <td class="small muted">{{ entry.result.basis }}</td>
         <td class="small">{% for award in entry.awards %}{{ award.vendor.name }}
-          ({{ fmt_qty(award.qty) }} @ {{ fmt_money(award.unit_price) }}){% if not loop.last %}<br>{% endif %}
+          ({{ fmt_qty(award.qty) }} @ {{ fmt_money(award.unit_price) }})
+          {%- if award.notes %}<div class="muted tiny">{{ award.notes }}</div>{% endif %}
+          {%- if not loop.last %}<br>{% endif %}
           {% else %}<span class="muted">not awarded</span>{% endfor %}</td></tr>
     {% endfor %}
     </tbody></table></div>
@@ -54,7 +56,11 @@
         <td>{{ entry.label }}</td><td>{{ bid.vendor.name }}</td>
         <td class="num mono">{{ fmt_money(bid.unit_price) }}</td>
         <td class="num mono">{{ fmt_money(bid.total) }}</td>
-        <td>{% if bid.withdrawn %}<span class="pill bad">withdrawn</span>{% else %}<span class="pill good">live</span>{% endif %}</td></tr>
+        {# "live" beside every bid on a finished auction reads as though the
+           auction is still running. What the column actually means is whether
+           the bid counts. #}
+        <td>{% if bid.withdrawn %}<span class="pill bad">withdrawn</span>
+            {%- else %}<span class="pill good">counted</span>{% endif %}</td></tr>
     {% endfor %}{% endfor %}
     {% if not s.total_bids %}
       <tr><td colspan="6" class="empty">No bids were placed in this auction.</td></tr>

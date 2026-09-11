@@ -3,22 +3,16 @@
 {% block content %}
 <div class="auth">
   <div class="card">
-    <h1>Create your account</h1>
-    <p class="muted small">Takes about thirty seconds.</p>
+    <h1>Create the first account</h1>
+    <p class="muted small">This is the buying account that runs the auctions. Everyone else —
+      your colleagues and your suppliers — arrives by invitation afterwards, so this page only
+      appears once.</p>
     {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
     <form method="post" action="/signup">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="field"><label>I am…</label>
-        <label class="check"><input type="radio" name="account_type" value="buyer"
-               {{ 'checked' if (account_type or 'buyer') == 'buyer' }}>
-          <span><span class="t">Buying</span><span class="d">I run auctions and award the business.</span></span></label>
-        <label class="check"><input type="radio" name="account_type" value="vendor"
-               {{ 'checked' if account_type == 'vendor' }}>
-          <span><span class="t">Supplying</span><span class="d">I place bids in auctions I am invited to.</span></span></label>
-      </div>
       <div class="field"><label for="name">Your name</label>
         <input id="name" name="name" value="{{ name or '' }}" required></div>
-      <div class="field"><label for="company">Company <span class="muted small">(optional for buyers)</span></label>
+      <div class="field"><label for="company">Your company <span class="muted small">(optional)</span></label>
         <input id="company" name="company" value="{{ company or '' }}"></div>
       <div class="field"><label for="email">Work email</label>
         <input id="email" type="email" name="email" value="{{ email or '' }}" required>

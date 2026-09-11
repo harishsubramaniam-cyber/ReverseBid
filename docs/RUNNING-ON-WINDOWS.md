@@ -156,10 +156,28 @@ RA_MAIL_FROM=your.name@gmail.com
 > **If Windows hides file extensions** your copy may really be called `.env.txt`, which will not
 > work. In File Explorer, click **View** → tick **File name extensions**, then rename it properly.
 
-**3. Restart the app** — close the black window, double-click `windows-start.bat` again.
+**3. Restart the app** — close the black window, double-click `windows-start.bat` again. The
+settings are only read when the app starts, so nothing changes until you do this.
 
-Check it worked: the blue “emails are in preview mode” banner on the dashboard disappears, and
-`localhost:8000/healthz` says `"email_mode":"smtp"`.
+**4. Check it, on the Outbox page.** Go to **Outbox**. The panel at the top now says *Sending is
+switched on* and lists the server, port and sign-in name it is using — if it still says
+*Practice mode*, the app did not find your `.env` file. Then press **Send test email**. It sends
+one message immediately and shows you exactly what the mail server said:
+
+| What you see | What it means |
+| --- | --- |
+| *Sent to … through smtp.gmail.com* | Working. Check the inbox, and the spam folder. |
+| *would not accept the username and password* | The app password is wrong, or `RA_SMTP_USER` is not the full address. Make a fresh app password. |
+| *Nothing answered … within 30 seconds* | Your network is blocking port 587 — common on office and campus Wi-Fi. Try `RA_SMTP_PORT=465` with `RA_SMTP_SSL=1`, or a different network. |
+| *The address … could not be found* | A typo in `RA_SMTP_HOST`. Gmail is `smtp.gmail.com`. |
+
+### “The status says queued”
+
+`going out…` (stored as *queued*) means the message is waiting its turn. Messages go out one at
+a time, and a mail server that never answers takes up to 30 seconds to give up, so a handful can
+sit there for a minute. The page refreshes itself; leave it and the status settles to **sent** or
+**failed**, and a failure prints the reason underneath. If they were stuck because the app was
+restarted mid-send, press **Try them again**.
 
 > ⚠️ **Before you send anything for real, clear the demo data.** The demo suppliers have made-up
 > addresses. See the next section.
@@ -203,7 +221,7 @@ sign-in page to make your own buyer login.
 | The black window flashes and vanishes | Open Command Prompt, `cd /d C:\ReverseBid`, then type `windows-start.bat` and press Enter. The error stays on screen so you can read it. |
 | “Windows protected your PC” | Click **More info** → **Run anyway**. It appears because the file came from a download. |
 | The page says **502** or will not load at all | Check the black window is still open. If it closed, start it again. |
-| Emails are not arriving | Open the **Outbox** page. If messages are listed as `outbox`, no mail server is set up yet — see *Turning on real emails*. If they say `failed`, the reason is shown next to them (usually a wrong app password). |
+| Emails are not arriving | Open the **Outbox** page and press **Send test email** — it tells you in one line what the mail server said. *saved here* means no mail server is set up yet (see *Turning on real emails*); *going out…* means give it a minute; *failed* prints the reason underneath. |
 | Everything looks broken after an update | Stop the app, run `windows-setup.bat` again, then start it. |
 
 ---

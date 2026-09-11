@@ -12,3 +12,25 @@ jobs:
       - run: python tests/test_end_to_end.py
       - run: python tests/test_hostile.py
       - run: python tests/test_regressions.py
+      - run: python tests/test_features.py
+      - run: python tests/test_scenarios.py
+      - run: pip install aiosmtpd
+      - run: python tests/test_email.py
+
+  journeys:
+    # The same screens a person actually uses, driven in a real browser.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pip install playwright
+      - run: python -m playwright install --with-deps chromium
+      - run: python tests/test_browser.py
+      - run: python tests/test_journey_first_run.py
+      - run: python tests/test_journey_supplier.py
+      - run: python tests/test_journey_buyer.py
+      - run: python tests/test_journey_awkward.py
+      - run: python tests/test_journey_landed.py

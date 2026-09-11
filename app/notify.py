@@ -15,7 +15,7 @@ from . import config
 from .emails_util import parse as parse_emails
 from .mailer import queue_email
 from .models import Auction, Notification, Participant, User, Vendor
-from .utils import fmt_dt, fmt_money
+from .utils import fmt_dt, fmt_money, first_name
 
 _env = Environment(
     loader=FileSystemLoader(str(config.BASE_DIR / "app" / "templates")),
@@ -44,6 +44,9 @@ class Recipient:
     name: str
     email: str = ""
     user_id: int | None = None
+    #: The vendor this contact belongs to, when they are a bidder's contact.
+    #: Anyone here without a login is offered a link that creates one.
+    vendor_id: int | None = None
 
     @property
     def key(self) -> str:
@@ -51,7 +54,8 @@ class Recipient:
 
 
 def _from_user(user: User) -> Recipient:
-    return Recipient(name=user.name, email=user.email, user_id=user.id)
+    return Recipient(name=user.name, email=user.email, user_id=user.id,
+                     vendor_id=user.vendor_id)
 
 
 def _name_from_email(address: str) -> str:
@@ -88,14 +92,16 @@ def vendor_recipients(db: Session, vendor_id: int,
 
     out: dict[str, Recipient] = {}
     for address in addresses:
-        out[address] = Recipient(name=_name_from_email(address), email=address)
+        out[address] = Recipient(name=_name_from_email(address), email=address,
+                                 vendor_id=vendor_id)
     for user in vendor_users(db, vendor_id):
         key = user.email.lower()
         if key in out or not override:
             out[key] = _from_user(user)          # a real name beats a guessed one
         else:
             # Their address was replaced for this auction - keep the in-app alert.
-            out[f"user-{user.id}"] = Recipient(name=user.name, user_id=user.id)
+            out[f"user-{user.id}"] = Recipient(name=user.name, user_id=user.id,
+                                               vendor_id=vendor_id)
     return list(out.values())
 
 
@@ -118,7 +124,13 @@ def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: s
          paragraphs: Sequence[str], facts: Sequence[tuple[str, str]] = (),
          cta_text: str = "", link: str = "", note: str = "",
          auction: Auction | None = None, in_app: bool = True) -> int:
-    """Deliver one event to many users. Returns the number of emails queued."""
+    """Deliver one event to many users. Returns the number of emails queued.
+
+    A bidder contact with no login gets a link that sets a password, on every
+    email - not just the first invitation. Otherwise the button in "bidding is
+    open" or "you have been outbid" drops them on a sign-in page for an
+    account that does not exist, which is a dead end at the worst moment.
+    """
     template = _env.get_template("emails/base.html")
     count = 0
     seen: set[str] = set()
@@ -137,13 +149,27 @@ def send(db: Session, users: Iterable[User | Recipient], *, event: str, title: s
                                 link=link))
         if not person.email:
             continue
+        person_link, person_cta, person_note = link, cta_text, note
+        person_paragraphs = list(paragraphs)
+        if person.vendor_id and not person.user_id:
+            # No account yet: send them the one link that can create it.
+            from .security import make_invite
+            token = make_invite(person.email, "vendor", person.vendor_id)
+            person_link = f"/join/{token}"
+            person_cta = "Set your password and bid"
+            person_paragraphs.append(
+                "You do not have a password for this platform yet. The button below sets one "
+                "up — it takes a moment, and then you can bid.")
+            person_note = (f"This link is just for {person.email} and works for "
+                           f"{config.INVITE_DAYS} days.")
         html = template.render(
             app_name=config.APP_NAME, title=title,
-            greeting=(person.name.split()[0] if person.name else "there"),
-            paragraphs=paragraphs, facts=facts, accent=ACCENTS.get(event, "#1d4ed8"),
-            cta_text=cta_text or "Open in the app",
-            cta_url=(config.BASE_URL + link) if link else "",
-            note=note,
+            greeting=first_name(person.name),
+            paragraphs=person_paragraphs, facts=facts,
+            accent=ACCENTS.get(event, "#1d4ed8"),
+            cta_text=person_cta or "Open in the app",
+            cta_url=(config.BASE_URL + person_link) if person_link else "",
+            note=person_note,
         )
         queue_email(db, to_email=person.email, to_name=person.name, subject=title,
                     html_body=html, event=event,
@@ -234,21 +260,53 @@ def award_summary(db: Session, auction: Auction, rows: Sequence[tuple[str, str, 
 
 
 def auction_invited(db: Session, auction: Auction) -> int:
-    return send(
-        db, participant_users(db, auction), event="invited", auction=auction,
-        title=f"You are invited to bid: {auction.title}",
-        paragraphs=[
+    """Invite every bidder contact on the auction.
+
+    Sent one vendor at a time, because a contact with no login gets a link
+    that sets a password for *that* supplier - a supplier never picks which
+    company they belong to.
+    """
+    step = (fmt_money(auction.min_decrement) if auction.decrement_type.value == "absolute"
+            else f"{auction.min_decrement:g}%")
+    delivered = ("", "")
+    if auction.compare_landed:
+        delivered = (
+            "This auction is decided on the <b>delivered</b> price: your bid plus your own "
+            "freight, duty and packaging as agreed with the buyer. The bidding screen shows "
+            "you both numbers, and the exact price to type to take the lead.", "")
+    sent = 0
+    for part in auction.participants:
+        paragraphs = [
             "You have been invited to a <b>reverse auction</b>. That means the "
-            "<b>lowest</b> price wins, and you can keep lowering your bid until the clock stops.",
+            "<b>lowest</b> price wins, and you can keep lowering your bid until the clock "
+            "stops.",
             f"The starting price is the <b>maximum</b> the buyer will consider. Every bid you "
-            f"place must be at least "
-            f"<b>{fmt_money(auction.min_decrement) if auction.decrement_type.value == 'absolute' else str(auction.min_decrement) + '%'}</b> "
-            "below the current best price.",
-        ],
-        facts=_auction_facts(auction),
-        cta_text="View the auction", link=f"/auctions/{auction.id}",
-        note="You will get an email when the auction opens, and again if someone outbids you.",
-    )
+            f"place must be at least <b>{step}</b> below the current best price.",
+        ]
+        if delivered[0]:
+            paragraphs.append(delivered[0])
+        sent += send(
+            db, vendor_recipients(db, part.vendor_id, auction), event="invited",
+            auction=auction,
+            title=f"You are invited to bid: {auction.title}",
+            paragraphs=paragraphs,
+            facts=_auction_facts(auction) + _adder_facts(db, part),
+            cta_text="View the auction", link=f"/auctions/{auction.id}",
+            note="You will get an email when the auction opens, and again if someone "
+                 "outbids you.",
+        )
+    return sent
+
+
+def _adder_facts(db: Session, part) -> list[tuple[str, str]]:
+    """What this bidder's delivered costs add, spelled out in their own email."""
+    if part is None or not part.auction or not part.auction.compare_landed:
+        return []
+    from .engine import adders_from
+    adders = adders_from(part)
+    if not adders.any:
+        return [("Your delivered costs", "none agreed — your bid is your delivered price")]
+    return [("Your delivered costs", adders.describe())]
 
 
 def auction_starting_soon(db: Session, auction: Auction) -> int:
@@ -279,15 +337,22 @@ def bid_received(db: Session, auction: Auction, user: User, line_label: str,
 
 
 def outbid(db: Session, auction: Auction, vendor: Vendor, line_label: str,
-           new_best: float, your_price: float) -> int:
+           new_best: float, your_price: float, landed: bool = False) -> int:
+    # Where the auction is compared on delivered cost, these are delivered
+    # prices - saying "your price" would be quoting a number the bidder never
+    # typed, so the labels say which it is.
+    yours = "Your delivered price" if landed else "Your price"
+    theirs = "Current lowest delivered price" if landed else "Current lowest"
     return send(db, vendor_recipients(db, vendor.id, auction), event="outbid", auction=auction,
                 title=f"You have been outbid: {auction.title}",
                 paragraphs=[
                     f"Someone has gone below your price on <b>{line_label}</b>. "
-                    "You can still win by placing a lower bid before the clock stops.",
+                    "You can still win by placing a lower bid before the clock stops."
+                    + (" This auction is compared on the <b>delivered</b> price — your bid "
+                       "plus your freight, duty and packaging." if landed else ""),
                 ],
-                facts=[("Item", line_label), ("Your price", fmt_money(your_price)),
-                       ("Current lowest", fmt_money(new_best)),
+                facts=[("Item", line_label), (yours, fmt_money(your_price)),
+                       (theirs, fmt_money(new_best)),
                        ("Auction ends", fmt_dt(auction.end_at))],
                 cta_text="Bid again", link=f"/auctions/{auction.id}")
 
@@ -403,3 +468,20 @@ def bid_withdrawn(db: Session, auction: Auction, vendor: Vendor, line_label: str
                 paragraphs=[f"<b>{vendor.name}</b> has withdrawn their bid on "
                             f"<b>{line_label}</b>. Ranks have been recalculated."],
                 cta_text="View the auction", link=f"/auctions/{auction.id}")
+
+
+def colleague_invited(db: Session, inviter: User, email: str, vendor, link: str) -> int:
+    """Someone asking a colleague at their own company to join them."""
+    where = vendor.name if vendor is not None else config.APP_NAME
+    return send(
+        db, [Recipient(name=_name_from_email(email), email=email)],
+        event="invited", title=f"{inviter.name} has invited you to {where}",
+        paragraphs=[
+            f"<b>{inviter.name}</b> has invited you to join <b>{where}</b> on "
+            f"{config.APP_NAME}"
+            + (" so you can bid in the buyer's reverse auctions." if vendor is not None
+               else ", where your team runs its reverse auctions."),
+            "The button below sets your password. Nobody else can use this link.",
+        ],
+        cta_text="Set your password", link=link,
+        note=f"This link is just for {email} and works for {config.INVITE_DAYS} days.")

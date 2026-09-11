@@ -1,0 +1,60 @@
+# Putting ReverseBid online for people to try, in one file.
+#
+# In Render: New → Blueprint → pick this repository. Render reads this file and
+# sets everything up. There is nothing to type and nothing to configure.
+#
+# What this gives you: a public web address anyone can open, already filled
+# with the demo company — a live auction with bids coming in, four suppliers,
+# past auctions with savings on the dashboard. Visitors sign in as
+# buyer@demo.in / demo1234 (or vendor1@demo.in and the rest) and click around.
+#
+# Two deliberate choices for a try-out site:
+#
+#   * No mail server. Every email the app would send is kept in its Outbox
+#     page instead, where visitors can read exactly what a supplier receives.
+#     Nobody's real inbox is touched, and there is no password to set up.
+#   * No disk. The free plan has no permanent storage, so whatever visitors
+#     do is wiped when the service restarts — and the demo company is rebuilt
+#     automatically, clean, the moment it next starts. A demo that resets
+#     itself is a feature.
+#
+# For real auctions you would want the opposite of both: see DEPLOYING.md.
+services:
+  - type: web
+    name: reversebid-demo
+    runtime: python
+    plan: free
+    region: singapore             # nearest to India; oregon and frankfurt also fine
+    buildCommand: pip install -r requirements.txt
+    # One worker, always. The clock that opens and closes auctions and sends
+    # the "closing soon" alerts runs inside the web process, so two workers
+    # would run two clocks and email everyone twice.
+    # --proxy-headers so the app sees https and the real visitor's address
+    # through Render's load balancer.
+    startCommand: >-
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+      --proxy-headers --forwarded-allow-ips '*'
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      # Build the demo company whenever the database is empty. This is what
+      # makes the link worth opening. It does nothing once there is data.
+      - key: RA_DEMO_SEED
+        value: "1"
+      - key: RA_SECRET_KEY
+        generateValue: true
+      # Exactly one proxy (Render's) sits in front of the app, so the sign-in
+      # throttle and the audit trail can trust the last hop.
+      - key: RA_TRUSTED_PROXIES
+        value: "1"
+      - key: RA_TIMEZONE
+        value: Asia/Kolkata
+      - key: RA_CURRENCY
+        value: INR
+      - key: RA_CURRENCY_SYMBOL
+        value: "₹"
+      # RA_BASE_URL is deliberately absent: the app picks up Render's own
+      # address, so the links inside the demo emails are correct from the
+      # first deploy without you having to come back and set it.

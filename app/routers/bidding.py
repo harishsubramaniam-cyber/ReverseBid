@@ -14,12 +14,28 @@ from ..web import client_ip, redirect
 router = APIRouter(prefix="/auctions")
 
 
+def _row_id(raw: str) -> int | None:
+    """A database id out of a form field, or None. Never raises."""
+    raw = (raw or "").strip()
+    if not raw.isdecimal() or len(raw) > 18:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:                 # pragma: no cover - isdecimal covers this
+        return None
+    return value if 0 < value < 2 ** 62 else None
+
+
 @router.post("/{auction_id}/bid")
 def post_bid(auction_id: int, request: Request, line_id: str = Form(""),
              unit_price: str = Form(""), note: str = Form(""),
              user: User = Depends(vendor_only), db: Session = Depends(get_db)):
     auction = db.get(Auction, auction_id)
-    line = db.get(AuctionLine, int(line_id)) if line_id.isdigit() else None
+    # isdigit() is true for characters int() cannot parse ("²") and puts no
+    # bound on the length, so a tampered or stale form turned what should be a
+    # clean 404 into a 500 error page.
+    key = _row_id(line_id)
+    line = db.get(AuctionLine, key) if key else None
     if not auction or not line or line.auction_id != auction.id:
         raise HTTPException(404, "That item is not part of this auction.")
     if not unit_price.strip():

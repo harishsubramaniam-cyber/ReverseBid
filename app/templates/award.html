@@ -58,33 +58,42 @@
       {% if row.ranked %}
       <div class="table-wrap" style="margin-bottom:14px">
         <table>
+          {# Ranked on delivered cost where the auction works that way, so every
+             money column here is delivered too. Mixing the two made the table
+             read L1, L2 with the prices beside them going the other way. #}
           <thead><tr>
-            <th>Rank</th><th>Bidder</th><th class="num">Quantity</th><th class="num">Unit price</th>
+            <th>Rank</th><th>Bidder</th><th class="num">Quantity</th>
+            {% if auction.compare_landed %}<th class="num">Bid</th>
+            <th class="num">Delivered unit price</th>
+            {% else %}<th class="num">Unit price</th>{% endif %}
             <th class="num">Line total</th><th class="num">Saving</th><th style="width:120px">Award to</th>
           </tr></thead>
           <tbody>
-          {% for bid in row.ranked %}
-            <tr class="{{ 'is-best' if bid.vendor_id == row.chosen }}">
+          {% for entry in row.priced %}
+            <tr class="{{ 'is-best' if entry.bid.vendor_id == row.chosen }}">
               <td><span class="rank {{ 'l1' if loop.index == 1 }}{{ 'l2' if loop.index == 2 }}{{ 'l3' if loop.index == 3 }}">L{{ loop.index }}</span></td>
-              <td class="strong">{{ bid.vendor.name }}</td>
+              <td class="strong">{{ entry.vendor.name }}</td>
               <td class="num mono">{{ fmt_qty(line.qty) }} {{ line.unit.code if line.unit else '' }}</td>
-              <td class="num mono strong">{{ fmt_money(bid.unit_price) }}</td>
-              <td class="num mono">{{ fmt_money(line.qty * bid.unit_price) }}</td>
-              <td class="num mono" style="color:var(--good)">
-                {{ fmt_money(row.baseline - line.qty * bid.unit_price) }}</td>
+              {% if auction.compare_landed %}
+              <td class="num mono">{{ fmt_money(entry.headline) }}
+                {% if entry.adders.any %}<div class="muted tiny">+ {{ entry.adders.describe() }}</div>{% endif %}</td>
+              {% endif %}
+              <td class="num mono strong">{{ fmt_money(entry.unit) }}</td>
+              <td class="num mono">{{ fmt_money(entry.total) }}</td>
+              <td class="num mono" style="color:var(--good)">{{ fmt_money(entry.saving) }}</td>
               <td>
                 <label class="check" style="margin:0; padding:6px 8px; justify-content:center">
-                  <input type="radio" name="winner_{{ line.id }}" value="{{ bid.vendor_id }}"
-                         data-price="{{ bid.unit_price }}" data-line="{{ line.id }}"
-                         {{ 'checked' if bid.vendor_id == row.chosen }}>
-                  <span class="t" style="font-size:.82rem">{{ 'Winner' if bid.vendor_id == row.chosen else 'Pick' }}</span>
+                  <input type="radio" name="winner_{{ line.id }}" value="{{ entry.bid.vendor_id }}"
+                         data-price="{{ entry.headline }}" data-line="{{ line.id }}"
+                         {{ 'checked' if entry.bid.vendor_id == row.chosen }}>
+                  <span class="t" style="font-size:.82rem">{{ 'Winner' if entry.bid.vendor_id == row.chosen else 'Pick' }}</span>
                 </label>
               </td>
             </tr>
           {% endfor %}
             <tr>
               <td></td>
-              <td class="muted" colspan="5">Do not award this item to anyone</td>
+              <td class="muted" colspan="{{ 6 if auction.compare_landed else 5 }}">Do not award this item to anyone</td>
               <td><label class="check" style="margin:0; padding:6px 8px; justify-content:center">
                 <input type="radio" name="winner_{{ line.id }}" value=""
                        data-price="" data-line="{{ line.id }}" {{ 'checked' if not row.chosen }}>
@@ -98,7 +107,7 @@
         <div class="field" style="max-width:230px; margin:0">
           <label for="price_{{ line.id }}">Award price per unit ({{ currency }})</label>
           <input id="price_{{ line.id }}" name="price_{{ line.id }}" type="number" step="0.01" min="0"
-                 value="{{ row.price if row.price is not none else '' }}">
+                 value="{{ plain_money(row.price) }}">
           <p class="hint">{{ FIELD_HELP.award_price }}</p>
         </div>
         <div class="field" style="margin:0">

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Your team — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow">
+  <h1>Your team</h1>
+  <p class="sub">{% if vendor %}Everyone at <b>{{ vendor.name }}</b> who can sign in and bid.
+    {% else %}Everyone on the buying side who can sign in.{% endif %}</p>
+</div></div>
+
+<div class="grid g2">
+  <div class="card">
+    <div class="card-head"><h3>{{ colleagues|length }} can sign in</h3></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Email</th><th>Signs in as</th></tr></thead><tbody>
+      {% for person in colleagues %}
+        <tr><td><b>{{ person.name }}</b>{% if person.id == user.id %}
+            <span class="muted small">(you)</span>{% endif %}</td>
+          <td class="small">{{ person.email }}</td>
+          <td><span class="pill {{ 'good' if person.is_active else 'closed' }}">{{ person.role.value }}</span></td></tr>
+      {% endfor %}
+    </tbody></table></div>
+
+    {% if waiting %}
+    <h4 style="margin:16px 0 6px">Also gets the emails</h4>
+    <p class="muted small">These addresses are on your company's list for auction emails, but
+      nobody at them has set a password yet. Invite them below and they will be able to bid too.</p>
+    <ul class="plain small" style="margin:0; padding-left:18px">
+      {% for address in waiting %}<li>{{ address }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>Invite a colleague</h3></div>
+    <p class="muted small">They get an email with a link that sets their own password. The link
+      only works for the address you type, and only for a few weeks.</p>
+    <form method="post" action="/team/invite">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="email">Their work email</label>
+        <input id="email" type="email" name="email" required
+               placeholder="{{ 'sales@yourcompany.com' if vendor else 'colleague@yourcompany.com' }}">
+        <p class="hint">{% if vendor %}They join as {{ vendor.name }}, and can bid in the same
+          auctions you can.{% else %}They join the buying team, and can create and run
+          auctions.{% endif %}</p></div>
+      <button class="btn" type="submit">Send the invitation</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

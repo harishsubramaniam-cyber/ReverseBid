@@ -71,7 +71,18 @@ def _secret_key() -> str:
 
 SECRET_KEY = _secret_key()
 APP_NAME = os.getenv("RA_APP_NAME", "ReverseBid")
-BASE_URL = os.getenv("RA_BASE_URL", "http://localhost:8000")
+#: The address people actually reach this app on. It goes into every link in
+#: every email, and it decides whether session cookies are marked "secure", so
+#: getting it wrong sends suppliers links to localhost. Hosts that know their
+#: own address publish it, so use that when RA_BASE_URL has not been set.
+BASE_URL = (os.getenv("RA_BASE_URL")
+            or os.getenv("RENDER_EXTERNAL_URL")
+            or os.getenv("RAILWAY_PUBLIC_DOMAIN_URL")
+            or (f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}"
+                if os.getenv("RAILWAY_PUBLIC_DOMAIN") else "")
+            or (f"https://{os.environ['FLY_APP_NAME']}.fly.dev"
+                if os.getenv("FLY_APP_NAME") else "")
+            or "http://localhost:8000").rstrip("/")
 CURRENCY = os.getenv("RA_CURRENCY", "INR")
 CURRENCY_SYMBOL = os.getenv("RA_CURRENCY_SYMBOL", "₹")
 
@@ -93,3 +104,24 @@ EMAIL_ENABLED = bool(SMTP_HOST)
 SCHEDULER_INTERVAL_SECONDS = int(os.getenv("RA_SCHEDULER_INTERVAL", "5"))
 ENDING_SOON_MINUTES = int(os.getenv("RA_ENDING_SOON_MINUTES", "5"))
 STARTING_SOON_MINUTES = int(os.getenv("RA_STARTING_SOON_MINUTES", "30"))
+
+# ---------------------------------------------------------------- documents
+MAX_UPLOAD_MB = int(os.getenv("RA_MAX_UPLOAD_MB", "10"))
+MAX_ATTACHMENTS = int(os.getenv("RA_MAX_ATTACHMENTS", "30"))
+#: How long an invitation link to set a password stays usable.
+INVITE_DAYS = int(os.getenv("RA_INVITE_DAYS", "30"))
+
+# ---------------------------------------------------------------- behind a proxy
+#: How many reverse proxies sit in front of this app. Zero - the default, and
+#: the right answer when you run it yourself - means X-Forwarded-For is
+#: ignored entirely, because anyone can put whatever they like in it. Set it
+#: to 1 behind a single nginx or load balancer, and so on.
+TRUSTED_PROXIES = int(os.getenv("RA_TRUSTED_PROXIES", "0"))
+
+# ---------------------------------------------------------------- demo mode
+#: Fill an empty database with the sample company on startup. For a
+#: try-it-out deployment, where the point is that anyone who opens the link
+#: can sign in and click around. Never set this on an installation with real
+#: auctions in it: it only acts when the database is completely empty, but the
+#: accounts it creates have a published password.
+DEMO_SEED = os.getenv("RA_DEMO_SEED", "0") not in ("0", "false", "False", "")

@@ -1,18 +1,26 @@
 from __future__ import annotations
 
+import threading
+
 from fastapi import APIRouter, Depends, Form, Request
 from sqlalchemy.orm import Session
 
+from .. import config, notify
 from ..audit import record
 from ..db import get_db
+from ..emails_util import EmailError, parse as parse_emails, validate
 from ..models import Item, Role, User, Vendor
-from ..security import (SESSION_COOKIE, clear_failed_logins, current_user,
-                        current_user_optional, hash_password, login_blocked,
-                        note_failed_login, safe_next, set_session_cookie, verify_password)
-from ..utils import humanize_seconds
+from ..security import (_MAX_PER_ACCOUNT, SESSION_COOKIE, clear_failed_logins, current_user,
+                        current_user_optional, hash_password, login_blocked, make_invite,
+                        note_failed_login, read_invite, safe_next, set_session_cookie,
+                        verify_password)
+from ..utils import humanize_seconds, first_name
 from ..web import client_ip, redirect, render
 
 router = APIRouter()
+
+#: Serialises the one-and-only bootstrap account.
+_FIRST_ACCOUNT_LOCK = threading.Lock()
 
 
 @router.get("/login")
@@ -35,8 +43,13 @@ def login(request: Request, email: str = Form(""), password: str = Form(""),
                        "email": email})
 
     # Slow down password guessing, per address and per computer.
+    # Two buckets: one per address-and-computer, and one for the address
+    # alone. The second is the one that matters - the first can be spread
+    # across as many apparent addresses as the caller likes.
     throttle_key = f"{typed}|{client_ip(request)}"
-    wait = login_blocked(throttle_key)
+    account_key = f"account|{typed}"
+    wait = max(login_blocked(throttle_key),
+               login_blocked(account_key, _MAX_PER_ACCOUNT))
     if wait:
         return render(request, "login.html",
                       {"next": next, "email": email,
@@ -47,63 +60,207 @@ def login(request: Request, email: str = Form(""), password: str = Form(""),
     user = db.query(User).filter(User.email == typed).first()
     if not user or not verify_password(password, user.password_hash) or not user.is_active:
         note_failed_login(throttle_key)
+        note_failed_login(account_key)
         return render(request, "login.html",
                       {"next": next, "error": "That email and password don't match an account.",
                        "email": email}, status_code=200)
     clear_failed_logins(throttle_key)
+    clear_failed_logins(account_key)
     record(db, action="user.login", entity_type="user", entity_id=user.id, actor=user,
            ip=client_ip(request), commit=True)
-    response = redirect(next or "/", f"Welcome back, {user.name.split()[0]}.")
+    response = redirect(next or "/", f"Welcome back, {first_name(user.name)}.")
     set_session_cookie(response, user.id)
     return response
 
 
 @router.get("/signup")
-def signup_form(request: Request):
+def signup_form(request: Request, db: Session = Depends(get_db)):
+    """Only ever the very first account.
+
+    After that, people arrive by invitation: a buyer invites a colleague, and
+    a supplier gets a link from the auction they were invited to. Leaving this
+    open let a stranger create a buying account that could see every auction,
+    and let a supplier create one that was connected to nothing.
+    """
+    if db.query(User).count():
+        return render(request, "signup_closed.html", {})
     return render(request, "signup.html", {})
 
 
 @router.post("/signup")
 def signup(request: Request, name: str = Form(""), email: str = Form(""),
-           password: str = Form(""), account_type: str = Form("buyer"),
-           company: str = Form(""), db: Session = Depends(get_db)):
+           password: str = Form(""), company: str = Form(""),
+           db: Session = Depends(get_db)):
+    if db.query(User).count():
+        return render(request, "signup_closed.html", {}, status_code=403)
     email = email.strip().lower()
-    # Keep everything they typed - including which kind of account they asked
-    # for. Losing account_type silently turned a supplier into a buyer.
-    typed = {"name": name, "email": email, "account_type": account_type, "company": company}
+    typed = {"name": name, "email": email, "company": company}
     if not name.strip() or not email:
         return render(request, "signup.html",
                       {"error": "Please fill in your name and email address.", **typed})
-    if db.query(User).filter(User.email == email).first():
-        return render(request, "signup.html",
-                      {"error": "There is already an account with that email.", **typed})
     if len(password) < 6:
         return render(request, "signup.html",
                       {"error": "Please choose a password of at least 6 characters.", **typed})
-    if account_type not in ("buyer", "vendor"):
-        return render(request, "signup.html",
-                      {"error": "Choose whether this is a buying account or a supplier "
-                                "account.", **typed})
+    try:
+        validate(email, field="email address")
+    except EmailError as exc:
+        return render(request, "signup.html", {"error": str(exc), **typed})
 
-    vendor_id = None
-    role = Role.VENDOR if account_type == "vendor" else Role.BUYER
-    if role == Role.VENDOR:
-        vendor = Vendor(name=company.strip() or name, email=email)
-        db.add(vendor)
+    # Counting and then inserting is two steps, and six requests arriving
+    # together all counted zero and all committed - six owners on an install
+    # meant to have one, with nothing to tell the real owner a co-owner
+    # existed. One writer at a time, and the winner is whoever holds the
+    # lowest id once the dust settles.
+    with _FIRST_ACCOUNT_LOCK:
+        if db.query(User).count():
+            return render(request, "signup_closed.html", {}, status_code=403)
+        user = User(name=name.strip(), email=email, password_hash=hash_password(password),
+                    role=Role.BUYER)
+        db.add(user)
         db.flush()
-        vendor_id = vendor.id
-
-    user = User(name=name.strip(), email=email, password_hash=hash_password(password),
-                role=role, vendor_id=vendor_id)
-    db.add(user)
-    db.flush()
-    record(db, action="user.signup", entity_type="user", entity_id=user.id, actor=user,
-           ip=client_ip(request), detail={"role": role.value})
-    db.commit()
+        record(db, action="user.signup", entity_type="user", entity_id=user.id, actor=user,
+               ip=client_ip(request), detail={"role": Role.BUYER.value, "first_account": True})
+        db.commit()
+    first = db.query(User).order_by(User.id.asc()).first()
+    if first is None or first.id != user.id:
+        # Another process got in first (several workers on one database).
+        db.delete(user)
+        db.commit()
+        return render(request, "signup_closed.html", {}, status_code=403)
 
     response = redirect("/onboarding", "Your account is ready.")
     set_session_cookie(response, user.id)
     return response
+
+
+# ------------------------------------------------------------------ invitations
+@router.get("/join/{token}")
+def join_form(token: str, request: Request, db: Session = Depends(get_db)):
+    """Set a password on an invitation. This is how every supplier gets in."""
+    data = read_invite(token, config.INVITE_DAYS)
+    if not data:
+        return render(request, "join.html",
+                      {"expired": True,
+                       "message": "This invitation link has expired or is not valid. Ask the "
+                                  "buyer to send you a new one — publishing the auction again "
+                                  "will do it."}, status_code=400)
+    existing = db.query(User).filter(User.email == data["e"]).first()
+    if existing:
+        return redirect("/login", "You already have an account for that address — please sign "
+                                  "in with your password.")
+    vendor = db.get(Vendor, data.get("v")) if data.get("v") else None
+    if data["r"] == "vendor" and not vendor:
+        return render(request, "join.html",
+                      {"expired": True,
+                       "message": "The supplier this invitation belongs to is no longer on "
+                                  "the system. Ask the buyer to invite you again."},
+                      status_code=400)
+    return render(request, "join.html",
+                  {"token": token, "email": data["e"], "role": data["r"],
+                   "vendor": vendor})
+
+
+@router.post("/join/{token}")
+def join(token: str, request: Request, name: str = Form(""), password: str = Form(""),
+         confirm: str = Form(""), db: Session = Depends(get_db)):
+    data = read_invite(token, config.INVITE_DAYS)
+    if not data:
+        return render(request, "join.html",
+                      {"expired": True,
+                       "message": "This invitation link has expired or is not valid. Ask for "
+                                  "a new one."}, status_code=400)
+    vendor = db.get(Vendor, data.get("v")) if data.get("v") else None
+    again = {"token": token, "email": data["e"], "role": data["r"], "vendor": vendor,
+             "name": name}
+    if db.query(User).filter(User.email == data["e"]).first():
+        return redirect("/login", "You already have an account for that address — please sign in.")
+    if not name.strip():
+        return render(request, "join.html", {**again, "error": "Please type your name."})
+    if len(password) < 6:
+        return render(request, "join.html",
+                      {**again, "error": "Please choose a password of at least 6 characters."})
+    if password != confirm:
+        return render(request, "join.html",
+                      {**again, "error": "Those two passwords are not the same. Type them again."})
+
+    role = Role.VENDOR if data["r"] == "vendor" else Role.BUYER
+    if role == Role.VENDOR and vendor is None:
+        # The GET refuses this; the POST used to go ahead and make a supplier
+        # login attached to no supplier at all, which could then see nothing
+        # and bid on nothing.
+        return render(request, "join.html",
+                      {"expired": True,
+                       "message": "The supplier this invitation was for is no longer on the "
+                                  "buyer's list. Ask them to invite you again."},
+                      status_code=400)
+    user = User(name=name.strip(), email=data["e"], password_hash=hash_password(password),
+                role=role, vendor_id=vendor.id if (role == Role.VENDOR and vendor) else None)
+    db.add(user)
+    db.flush()
+    record(db, action="user.join", entity_type="user", entity_id=user.id, actor=user,
+           ip=client_ip(request),
+           detail={"role": role.value, "vendor": vendor.name if vendor else None})
+    db.commit()
+    where = "/" if role == Role.VENDOR else "/onboarding"
+    response = redirect(where, f"Welcome, {first_name(user.name)}. Your account is ready.")
+    set_session_cookie(response, user.id)
+    return response
+
+
+@router.get("/team")
+def team(request: Request, user: User = Depends(current_user),
+         db: Session = Depends(get_db)):
+    """Who else at your company can sign in, and a box to invite one more."""
+    if user.is_vendor:
+        colleagues = (db.query(User).filter(User.vendor_id == user.vendor_id)
+                        .order_by(User.name).all())
+        vendor = db.get(Vendor, user.vendor_id)
+        waiting = [address for address in
+                   ([vendor.email] + parse_emails(vendor.extra_emails) if vendor else [])
+                   if address not in {u.email for u in colleagues}]
+    else:
+        colleagues = (db.query(User).filter(User.role.in_([Role.BUYER, Role.ADMIN]))
+                        .order_by(User.name).all())
+        vendor, waiting = None, []
+    return render(request, "team.html",
+                  {"colleagues": colleagues, "vendor": vendor, "waiting": waiting},
+                  user=user, db=db)
+
+
+@router.post("/team/invite")
+def team_invite(request: Request, email: str = Form(""),
+                user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Invite a colleague at your own company. Never anyone else's."""
+    try:
+        addresses = validate(email, field="email address")
+    except EmailError as exc:
+        return redirect("/team", str(exc), kind="error")
+    if not addresses:
+        return redirect("/team", "Type the email address of the colleague you want to invite.",
+                        kind="error")
+    address = addresses[0]
+    if db.query(User).filter(User.email == address).first():
+        return redirect("/team", f"{address} can already sign in.", kind="error")
+
+    vendor = db.get(Vendor, user.vendor_id) if user.is_vendor else None
+    if user.is_vendor and vendor is None:
+        return redirect("/team", "Your account is not linked to a supplier record yet. Ask "
+                                 "the buyer to check it.", kind="error")
+    if vendor is not None:
+        # Keep them on the vendor's email list as well, so they hear about the
+        # auctions even before they set a password.
+        known = parse_emails(vendor.extra_emails)
+        if address != (vendor.email or "").lower() and address not in known:
+            vendor.extra_emails = "\n".join(known + [address])
+    role = "vendor" if user.is_vendor else "buyer"
+    token = make_invite(address, role, vendor.id if vendor else None)
+    record(db, action="user.invite", entity_type="user", actor=user,
+           ip=client_ip(request), detail={"email": address, "role": role})
+    db.commit()
+    notify.colleague_invited(db, inviter=user, email=address,
+                             vendor=vendor, link=f"/join/{token}")
+    return redirect("/team", f"Invitation sent to {address}. The link works for "
+                             f"{config.INVITE_DAYS} days.")
 
 
 @router.get("/onboarding")

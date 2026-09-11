@@ -311,6 +311,69 @@
     }
   });
 
+  // ------------------------------------------- the bid price, before sending
+  // Said in the app's own words, under the box. The server checks the same
+  // thing; this is so the bidder hears it at once rather than after a reload,
+  // and so the button is never silently dead.
+  function bidProblem(input) {
+    var value = parseFloat(input.value);
+    var currency = input.dataset.currency || "";
+    var money = function (n) {
+      return (currency ? currency + " " : "") +
+        Number(n).toLocaleString(undefined, { minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2 });
+    };
+    // The words are the server's own, so a bidder sees one vocabulary whether
+    // the page catches the mistake or the server does.
+    if (input.value.trim() === "") return "Type a price before pressing Place bid.";
+    if (!isFinite(value)) {
+      return "“" + input.value.trim().slice(0, 20) + "” is not a price. Use digits only, " +
+        "like 970.50.";
+    }
+    if (value <= 0) return "Enter a real price greater than zero.";
+    if (value > 1e12) return "That price is too large to be real. Check for an extra digit.";
+    var max = parseFloat(input.dataset.max);
+    if (isFinite(max) && value > max) {
+      return "Too high — this is a reverse auction, so your bid has to be " +
+        money(max) + " or less.";
+    }
+    var min = parseFloat(input.dataset.min);
+    if (isFinite(min) && value < min) {
+      return "That is a bigger drop than one step allows. The lowest you can go right now is " +
+        money(min) + ".";
+    }
+    return "";
+  }
+
+  function showBidProblem(input, message) {
+    var form = input.closest("form");
+    var box = form && form.querySelector(".field-error");
+    if (!box) return;
+    box.textContent = message;
+    box.hidden = !message;
+    input.classList.toggle("bad", !!message);
+  }
+
+  document.addEventListener("input", function (e) {
+    var input = e.target;
+    if (input.name !== "unit_price") return;
+    if (input.classList.contains("bad")) showBidProblem(input, bidProblem(input));
+  });
+
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form.matches || !form.matches("form[action$='/bid']")) return;
+    var input = form.querySelector("input[name=unit_price]");
+    if (!input) return;
+    var message = bidProblem(input);
+    showBidProblem(input, message);
+    if (message) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      input.focus();
+    }
+  }, true);
+
   // ---------------------------------------------- confirm before the big ones
   document.addEventListener("submit", function (e) {
     var form = e.target;
@@ -318,6 +381,54 @@
       if (!window.confirm(form.dataset.confirm)) e.preventDefault();
     }
   }, true);
+
+  // ------------------------------------- one press, one submission
+  // People double-click buttons. Every one of these forms does something the
+  // server should be asked to do once - place a bid, award the business,
+  // publish, send a message - so the button is taken out of use as soon as
+  // the browser starts sending, and put back if the page is still here a few
+  // seconds later (a failed request, or the person coming back with Back).
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (e.defaultPrevented) return;                 // handled by fetch above
+    if (!form.matches || form.matches("form[data-quick]")) return;
+    if (form.method && form.method.toLowerCase() !== "post") return;
+    if (form.dataset.sending === "1") {              // the second of a double press
+      e.preventDefault();
+      return;
+    }
+    // Set synchronously, so a second press in the same instant is stopped
+    // before it becomes a second request.
+    form.dataset.sending = "1";
+    // The buttons are dimmed a tick later: disabling one *during* the submit
+    // event would drop it from what gets sent.
+    var buttons = form.querySelectorAll("button[type=submit], button:not([type])");
+    function release() {
+      delete form.dataset.sending;
+      Array.prototype.forEach.call(buttons, function (button) {
+        button.disabled = false;
+        button.classList.remove("working");
+      });
+    }
+    setTimeout(function () {
+      Array.prototype.forEach.call(buttons, function (button) {
+        button.disabled = true;
+        button.classList.add("working");
+      });
+    }, 0);
+    // A safety net: if the request failed and the page is still here, the
+    // button has to work again rather than being dead for good.
+    setTimeout(release, 6000);
+    form.addEventListener("ra:release", release, { once: true });
+  });
+  // A page restored from the browser's cache (Back) must not come back with
+  // its buttons still dead.
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    document.querySelectorAll("form[data-sending]").forEach(function (form) {
+      form.dispatchEvent(new Event("ra:release"));
+    });
+  });
 
   // ---------------------------------------------- live line total as you type
   document.addEventListener("input", function (e) {

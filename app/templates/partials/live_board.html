@@ -22,13 +22,34 @@
         {% endif %}
         {% if line.specification %} · {{ line.specification }}{% endif %}
       </div>
+      {% if entry.docs %}
+      <div class="muted small" style="margin-top:5px">
+        <svg style="width:14px;height:14px;vertical-align:-2px"><use href="#i-box"/></svg>
+        {% for doc in entry.docs %}<a href="/auctions/{{ auction.id }}/documents/{{ doc.id }}">{{ doc.filename }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
+      </div>
+      {% endif %}
     </div>
-    {% if entry.best %}
+    {# Once it is decided, a bidder landing on this tab should not have to go
+       looking: say on the item itself whether they won it. #}
+    {% if user.is_vendor and auction.status.value == 'awarded' %}
     <div class="price-tag">
-      <div class="k">Lowest bid</div>
+      {% set won = entry.result.award and entry.result.award.vendor_id == user.vendor_id %}
+      <div class="k">Outcome</div>
+      <div class="v" style="font-size:.95rem; color:var(--{{ 'good' if won else 'ink-3' }})">
+        {% if won %}You won this item
+        {% elif entry.result.award %}Went to another bidder
+        {% else %}Not awarded{% endif %}
+      </div>
+      {% if won %}<div class="muted tiny">{{ fmt_qty(line.qty) }}
+        {{ line.unit.code if line.unit else '' }} at
+        {{ fmt_money(entry.result.award.unit_price) }}</div>{% endif %}
+    </div>
+    {% elif entry.best %}
+    <div class="price-tag">
+      <div class="k">{{ 'Lowest delivered' if auction.compare_landed else 'Lowest bid' }}</div>
       <div class="v">
         {% if user.is_buyer_side or auction.show_lowest_bid or entry.my_rank == 1 %}
-          {{ fmt_money(entry.best.unit_price) }}
+          {{ fmt_money(compare_price(entry.best)) }}
         {% else %}hidden{% endif %}
       </div>
       {% if user.is_buyer_side or auction.show_rank %}
@@ -45,7 +66,10 @@
         {% if entry.ranked %}
         <div class="table-wrap"><table>
           <thead><tr><th>Rank</th><th>Bidder</th><th class="num">Quantity</th>
-            <th class="num">Unit price</th><th class="num">Line total</th><th>When</th>
+            <th class="num">{{ 'Bid per unit' if auction.compare_landed else 'Unit price' }}</th>
+            {% if auction.compare_landed %}<th class="num">Delivery added</th>
+            <th class="num">Delivered</th>{% endif %}
+            <th class="num">Line total</th><th>When</th>
             <th class="num">vs start</th></tr></thead>
           <tbody>
           {% for bid in entry.ranked %}
@@ -54,12 +78,16 @@
               <td class="strong">{{ bid.vendor.name }}
                 <div class="muted tiny">{{ aliases.get(bid.vendor_id) }}</div></td>
               <td class="num mono">{{ fmt_qty(line.qty) }} {{ line.unit.code if line.unit else '' }}</td>
-              <td class="num mono strong">{{ fmt_money(bid.unit_price) }}</td>
-              <td class="num mono">{{ fmt_money(bid.total) }}</td>
+              <td class="num mono {{ '' if auction.compare_landed else 'strong' }}">{{ fmt_money(bid.unit_price) }}</td>
+              {% if auction.compare_landed %}
+              <td class="num mono muted small">{{ adders_for(bid.vendor_id).describe() }}</td>
+              <td class="num mono strong">{{ fmt_money(compare_price(bid)) }}</td>
+              {% endif %}
+              <td class="num mono">{{ fmt_money(compare_price(bid) * line.qty) }}</td>
               <td class="small">{{ fmt_dt(bid.created_at, False) }}</td>
               <td class="num mono" style="color:var(--good)">
                 {% if line.has_ceiling %}
-                  −{{ '%.1f'|format((line.starting_price - bid.unit_price) / line.starting_price * 100) }}%
+                  −{{ '%.1f'|format((line.starting_price - compare_price(bid)) / line.starting_price * 100) }}%
                 {% else %}—{% endif %}</td>
             </tr>
           {% endfor %}
@@ -83,16 +111,22 @@
             <tr><td>No ceiling — you may open at any price</td><td class="num muted">—</td></tr>
             {% endif %}
             {% if auction.show_lowest_bid and entry.best %}
-            <tr class="is-best"><td>Current lowest bid</td>
-              <td class="num mono strong">{{ fmt_money(entry.best.unit_price) }}</td></tr>
+            <tr class="is-best"><td>Current lowest {{ 'delivered price' if auction.compare_landed else 'bid' }}</td>
+              <td class="num mono strong">{{ fmt_money(compare_price(entry.best)) }}</td></tr>
             {% endif %}
             {% if entry.mine %}
             <tr class="is-mine"><td>Your best bid
                 {% if auction.show_rank and entry.my_rank %}
                   <span class="rank {{ 'l1' if entry.my_rank == 1 }}">L{{ entry.my_rank }}</span>{% endif %}</td>
               <td class="num mono strong">{{ fmt_money(entry.mine.unit_price) }}</td></tr>
+            {% if auction.compare_landed and my_adders.any %}
+            <tr><td class="muted small">Your delivery costs on top — {{ my_adders.describe() }}</td>
+              <td class="num mono muted small">+{{ fmt_money(compare_price(entry.mine) - entry.mine.unit_price) }}</td></tr>
+            <tr><td>Your delivered price — what you are ranked on</td>
+              <td class="num mono strong">{{ fmt_money(compare_price(entry.mine)) }}</td></tr>
+            {% endif %}
             <tr><td class="muted small">Your line total at that price</td>
-              <td class="num mono muted small">{{ fmt_money(entry.mine.unit_price * line.qty) }}</td></tr>
+              <td class="num mono muted small">{{ fmt_money(compare_price(entry.mine) * line.qty) }}</td></tr>
             {% else %}
             <tr><td class="muted">You have not bid on this item yet</td><td class="num muted">—</td></tr>
             {% endif %}
@@ -117,9 +151,21 @@
 
         {% if window.exhausted %}
         <div class="range-note">
-          Bidding on this item has gone as far as it can: the lowest bid is
-          <b>{{ fmt_money(window.reference) }}</b>, and the
-          {{ fmt_money(window.min_step) }} minimum decrement would leave nothing to bid.
+          {% if window.landed and window.adders.any and window.reference_is_ceiling %}
+            {# Nothing to do with how far the bidding has gone: this bidder's own
+               delivered costs are larger than the whole starting price. Telling
+               them to bid lower would send them round in circles. #}
+            Your delivered costs — <b>{{ window.adders.describe() }}</b> — already use up
+            the whole starting price of <b>{{ fmt_money(window.reference) }}</b> delivered,
+            so there is no price you could offer on this item.
+            <div class="tiny" style="margin-top:4px">Ask the buyer to look at this item:
+              either the starting price or the delivery terms would have to change.</div>
+          {% else %}
+            Bidding on this item has gone as far as it can: the
+            {{ 'lowest bid' if not window.reference_is_ceiling else 'starting price' }} is
+            <b>{{ fmt_money(window.reference) }}</b>, and the
+            {{ fmt_money(window.min_step) }} minimum decrement would leave nothing to bid.
+          {% endif %}
         </div>
         {% else %}
         <div class="range-note">
@@ -129,12 +175,36 @@
           {% elif window.reference_is_ceiling %}
             First bid on this item. You can bid <b>{{ fmt_money(window.max_allowed) }} or less</b>
             {%- if window.max_step %}, and no lower than {{ fmt_money(window.min_allowed) }} in one step{% endif %}.
+            {% if window.landed and window.adders.any %}
+            <div class="tiny" style="margin-top:4px">That is the delivered ceiling of
+              {{ fmt_money(window.reference) }} less your {{ window.adders.describe() }} —
+              type {{ fmt_money(window.max_allowed) }} and you land exactly on it.</div>
+            {% endif %}
+          {% elif entry.my_rank == 1 %}
+            {# Already winning. The rules still say a new bid has to beat the
+               standing best - which is their own - but the standing best is
+               theirs, so spelling out "your bid must be X or less" reads as
+               the platform asking the leader to undercut themselves, and the
+               suggestion chip below used to fill that number in for them. #}
+            Nothing to beat: the lowest bid on this item is your own
+            {{ fmt_money(window.reference) }}. You can lower it if you want to — the next bid
+            would have to be {{ fmt_money(window.max_allowed) }} or less — but while you are L1
+            there is nothing you need to do.
           {% else %}
             Your bid must be <b>{{ fmt_money(window.max_allowed) }} or less</b>
             {%- if window.max_step %} and <b>{{ fmt_money(window.min_allowed) }} or more</b>{% endif %}.
-            <div class="tiny" style="margin-top:4px">That is the current best of
-              {{ fmt_money(window.reference) }} minus the {{ fmt_money(window.min_step) }}
-              minimum decrement.</div>
+            <div class="tiny" style="margin-top:4px">
+              {% if window.landed and window.adders.any %}
+                The lowest delivered price is {{ fmt_money(window.reference) }}. To beat it by the
+                {{ fmt_money(window.min_step) }} minimum decrement with your
+                {{ window.adders.describe() }} on top, type
+                {{ fmt_money(window.max_allowed) }} — that lands at
+                {{ fmt_money(window.max_allowed_landed) }}.
+              {% else %}
+                That is the current best of {{ fmt_money(window.reference) }} minus the
+                {{ fmt_money(window.min_step) }} minimum decrement.
+              {% endif %}
+            </div>
           {% endif %}
         </div>
 
@@ -144,15 +214,27 @@
           <label for="p{{ line.id }}">Your price per {{ line.unit.code if line.unit else 'unit' }}</label>
           <div class="price-input">
             <span class="cur">{{ currency }}</span>
+            {# The allowed range rides as data- attributes, not min/max. With
+               max= set, a price above the ceiling made the browser block the
+               form with its own terse tooltip: to the bidder, Place bid simply
+               did nothing. The range is now checked here in the app's own
+               words, and again on the server. #}
             <input id="p{{ line.id }}" type="number" step="0.01" min="0.01" name="unit_price"
-                   {% if window.max_allowed %}max="{{ window.max_allowed }}"{% endif %}
-                   required placeholder="{{ window.suggestion or 'Your price' }}"
+                   {% if window.max_allowed %}data-max="{{ window.max_allowed }}"{% endif %}
+                   {% if window.max_step %}data-min="{{ window.min_allowed }}"{% endif %}
+                   data-currency="{{ currency }}"
+                   required placeholder="{{ 'Your price' if entry.my_rank == 1
+                      else (fmt_money(window.suggestion, False) if window.suggestion
+                            else 'Your price') }}"
                    data-qty="{{ line.qty }}" data-total="total{{ line.id }}">
             <button class="btn" type="submit">Place bid</button>
           </div>
           <p class="hint">{{ FIELD_HELP.bid_price }}
             <span id="total{{ line.id }}"></span></p>
-          {% if window.suggestion %}
+          <p class="field-error" id="err{{ line.id }}" hidden></p>
+          {# No one-click chip while they are already L1: that is an invitation
+             to bid against themselves. #}
+          {% if window.suggestion and entry.my_rank != 1 %}
           <button type="button" class="chip" data-fill="{{ window.suggestion }}"
                   data-fill-target="#p{{ line.id }}">Use {{ fmt_money(window.suggestion) }}</button>
           {% endif %}
@@ -160,7 +242,10 @@
         {% endif %}
       </div>
 
-      {% set mine = entry.history | selectattr('vendor_id','equalto',user.vendor_id) | list %}
+      {# Newest first: the bid a bidder wants to look at, or withdraw, is the
+         one they just placed - so it belongs at the top, not the bottom. #}
+      {% set mine = entry.history | selectattr('vendor_id','equalto',user.vendor_id)
+                                  | sort(attribute='created_at', reverse=True) | list %}
       {% if mine %}
       <details class="qa" style="margin-top:12px"><summary>Your bids on this item ({{ mine|length }})</summary>
         <div class="a">
@@ -209,13 +294,19 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Rank</th><th>Bidder</th><th class="num">Items priced</th>
       <th class="num">Total if they won it all</th><th class="num">vs baseline</th></tr></thead><tbody>
-    {% for vendor_id, total, count in overall %}
+    {% for row in overall %}
       <tr class="{{ 'is-best' if loop.index == 1 }}">
         <td><span class="rank {{ 'l1' if loop.index == 1 }}">L{{ loop.index }}</span></td>
-        <td class="strong">{{ vendor_by_id[vendor_id].name if vendor_id in vendor_by_id else '—' }}</td>
-        <td class="num mono">{{ count }} of {{ lines|length }}</td>
-        <td class="num mono strong">{{ fmt_money(total) }}</td>
-        <td class="num mono" style="color:var(--good)">{{ fmt_money(summary.baseline - total) }}</td></tr>
+        <td class="strong">{{ vendor_by_id[row.vendor_id].name
+                              if row.vendor_id in vendor_by_id else '—' }}</td>
+        <td class="num mono">{{ row.lines }} of {{ lines|length }}</td>
+        <td class="num mono strong">{{ fmt_money(row.total) }}</td>
+        {# Against the baseline of the items they priced, not the whole
+           auction's - otherwise skipping an item reads as a saving. #}
+        <td class="num mono" style="color:var(--good)">{{ fmt_money(row.savings) }}
+          {% if not row.complete %}<div class="muted tiny">on the
+            {{ row.lines }} item{{ '' if row.lines == 1 else 's' }} they priced</div>{% endif %}
+        </td></tr>
     {% endfor %}
   </tbody></table></div>
 </div>

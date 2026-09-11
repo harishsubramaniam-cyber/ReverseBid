@@ -81,3 +81,32 @@ def alias_for(index: int) -> str:
         index, rem = divmod(index - 1, 26)
         letters = chr(65 + rem) + letters
     return f"Bidder {letters}"
+
+
+def first_name(full: str | None) -> str:
+    """What to call someone in a greeting.
+
+    Plain ``name.split()[0]`` greets "R Venkatesh" as "R", and writing the
+    initial first is completely ordinary - K Sharma, M S Dhoni, A. Kumar. So
+    skip over leading initials and use the first real word; if the whole name
+    is initials, use it as it was typed.
+    """
+    parts = (full or "").split()
+    for part in parts:
+        bare = part.replace(".", "")
+        if len(bare) > 1:
+            return part.strip(".,")
+    return " ".join(parts) or "there"
+
+
+def plain_money(value) -> str:
+    """A number for an <input type=number>: no symbol, no separators, no
+    trailing ".0". The award screen showed "60700.0" in the box beside
+    "₹ 60,700.00" everywhere else."""
+    if value is None or value == "":
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{number:.2f}".rstrip("0").rstrip(".")

@@ -2,7 +2,7 @@
 {% block title %}My bidding — {{ app_name }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow">
-  <h1>Hello, {{ user.name.split()[0] }}</h1>
+  <h1>Hello, {{ first_name(user.name) }}</h1>
   <p class="sub">Everything you have been invited to. Lowest price wins — you can bid as often as you like.</p>
 </div></div>
 

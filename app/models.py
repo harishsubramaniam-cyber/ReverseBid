@@ -86,8 +86,26 @@ class Vendor(Base):
     created_by_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=utcnow)
 
+    # --- what this vendor's price usually costs on top, to get it delivered.
+    #     These are only defaults: they pre-fill the auction form, and each
+    #     auction keeps its own copy so history cannot be rewritten later.
+    default_freight = Column(Float, default=0.0)
+    default_freight_basis = Column(String(10), default="unit")     # unit | percent
+    default_duty = Column(Float, default=0.0)
+    default_duty_basis = Column(String(10), default="percent")
+    default_packaging = Column(Float, default=0.0)
+    default_packaging_basis = Column(String(10), default="unit")
+    default_other = Column(Float, default=0.0)
+    default_other_basis = Column(String(10), default="unit")
+    default_other_label = Column(String(60), default="")
+
     users = relationship("User", back_populates="vendor",
                          foreign_keys="User.vendor_id")
+
+    @property
+    def has_default_adders(self) -> bool:
+        return any([self.default_freight, self.default_duty,
+                    self.default_packaging, self.default_other])
 
 
 class Unit(Base):
@@ -138,6 +156,12 @@ class Auction(Base):
     show_rank = Column(Boolean, default=True)
     show_lowest_bid = Column(Boolean, default=True)
     hide_bidder_names = Column(Boolean, default=True)
+    #: Compare bidders on their DELIVERED price - each bidder's own freight,
+    #: duty and packaging added to what they bid. Off by default, so an
+    #: auction that says nothing about it behaves exactly as it always has.
+    #: When it is on, the starting price is a delivered ceiling, ranks and
+    #: decrements work on delivered prices, and so does the savings maths.
+    compare_landed = Column(Boolean, default=False)
 
     auto_extend = Column(Boolean, default=True)
     extend_trigger_seconds = Column(Integer, default=120)
@@ -224,6 +248,20 @@ class Participant(Base):
     #: Addresses to use for THIS auction only. Blank = the vendor's usual list.
     notify_emails = Column(Text, default="")
 
+    # --- what it costs to get this bidder's goods to the door, for THIS
+    #     auction. Copied from the vendor's defaults when they are invited,
+    #     then frozen: they can only be changed while the auction is still
+    #     editable, so a bid can never be re-ranked after it was placed.
+    freight = Column(Float, default=0.0)
+    freight_basis = Column(String(10), default="unit")     # unit | percent
+    duty = Column(Float, default=0.0)
+    duty_basis = Column(String(10), default="percent")
+    packaging = Column(Float, default=0.0)
+    packaging_basis = Column(String(10), default="unit")
+    other = Column(Float, default=0.0)
+    other_basis = Column(String(10), default="unit")
+    other_label = Column(String(60), default="")
+
     auction = relationship("Auction", back_populates="participants")
     vendor = relationship("Vendor")
 
@@ -238,6 +276,10 @@ class Bid(Base):
     unit_price = Column(Float, nullable=False)
     qty = Column(Float, default=1.0)
     total = Column(Float, nullable=False)
+    #: The delivered price this bid was ranked at - the bid plus this bidder's
+    #: freight, duty and packaging as they stood when it was placed. Kept on
+    #: the bid so the record of who led, and by how much, cannot drift.
+    landed_unit_price = Column(Float)
     note = Column(String(400), default="")
     withdrawn = Column(Boolean, default=False, index=True)
     withdrawn_at = Column(DateTime)
@@ -267,6 +309,10 @@ class Award(Base):
     qty = Column(Float, nullable=False)
     unit_price = Column(Float, nullable=False)
     total = Column(Float, nullable=False)
+    #: The delivered equivalent of the awarded price, where the auction was
+    #: compared that way. What the business actually spends.
+    landed_unit_price = Column(Float)
+    landed_total = Column(Float)
     notes = Column(Text, default="")
     awarded_by_id = Column(Integer, ForeignKey("users.id"))
     awarded_at = Column(DateTime, default=utcnow)
@@ -274,6 +320,9 @@ class Award(Base):
     line = relationship("AuctionLine")
     vendor = relationship("Vendor")
     auction = relationship("Auction")
+    #: The bid this award was based on, where one was picked from the board.
+    #: Null when the buyer typed a price nobody had bid.
+    bid = relationship("Bid")
 
 
 class Message(Base):
@@ -290,6 +339,46 @@ class Message(Base):
     sender = relationship("User")
     vendor = relationship("Vendor")
     auction = relationship("Auction")
+
+
+class Attachment(Base):
+    """A document on an auction: a drawing, a spec, a compliance sheet.
+
+    ``audience`` decides who may download it. A buyer's document is normally
+    for the bidders; a bidder's document is only ever for the buyer, so one
+    supplier can never see another's paperwork.
+    """
+    __tablename__ = "attachments"
+    id = Column(Integer, primary_key=True)
+    auction_id = Column(Integer, ForeignKey("auctions.id"), nullable=False, index=True)
+    #: Which item it belongs to, if any. Kept by item rather than by auction
+    #: line, because editing an auction rebuilds its lines and would otherwise
+    #: orphan every drawing attached to them.
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=True)
+    #: Set when a bidder uploaded it.
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=True, index=True)
+    audience = Column(String(10), default="bidders")   # bidders | buyer
+    filename = Column(String(260), nullable=False)     # what the person called it
+    stored_name = Column(String(120), nullable=False)  # what it is called on disk
+    content_type = Column(String(120), default="application/octet-stream")
+    size_bytes = Column(Integer, default=0)
+    note = Column(String(300), default="")
+    uploaded_by_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=utcnow, index=True)
+
+    auction = relationship("Auction")
+    item = relationship("Item")
+    vendor = relationship("Vendor")
+    uploaded_by = relationship("User")
+
+    @property
+    def size_label(self) -> str:
+        size = float(self.size_bytes or 0)
+        for unit in ("bytes", "KB", "MB"):
+            if size < 1024 or unit == "MB":
+                return f"{size:,.0f} {unit}" if unit == "bytes" else f"{size:,.1f} {unit}"
+            size /= 1024
+        return f"{size:,.1f} MB"
 
 
 class Notification(Base):

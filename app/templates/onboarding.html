@@ -2,7 +2,7 @@
 {% block title %}Getting started — {{ app_name }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow">
-  <h1>Welcome, {{ user.name.split()[0] }} 👋</h1>
+  <h1>Welcome, {{ first_name(user.name) }} 👋</h1>
   <p class="sub">Here is the whole thing in four steps. It should take under five minutes.</p>
 </div></div>
 
@@ -34,7 +34,10 @@
       <li><b>Add a few vendors</b> — a name and an email is all we need.
         <span class="muted small">({{ counts.vendors }} so far)</span></li>
       <li><b>Add the items you buy</b> — just a name.
-        <span class="muted small">({{ counts.items }} so far)</span></li>
+        {# counts['items'], never counts.items: a dict's own .items is the
+           built-in method, and Jinja printed "<built-in method items of dict
+           object at 0x…>" on the welcome screen of every new account. #}
+        <span class="muted small">({{ counts['items'] }} so far)</span></li>
       <li><b>Create an auction</b> and pick the vendors to invite. Anything missing can be added
         on the form itself.</li>
       <li><b>Publish.</b> Invitations go out by email immediately.</li>

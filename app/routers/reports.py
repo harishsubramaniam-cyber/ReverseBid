@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -14,6 +14,11 @@ from ..utils import TZ
 from ..web import render
 
 router = APIRouter(prefix="/reports")
+
+#: Far enough out that no real report needs more, and clear of the ends of the
+#: calendar, where converting a local midnight to UTC overflows.
+EARLIEST = date(1900, 1, 1)
+LATEST = date(9000, 12, 31)
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -37,6 +42,11 @@ def _window(date_from: str, date_to: str) -> tuple[datetime, datetime, str, str]
 
     start_date = parse(date_from, today.replace(day=1))
     end_date = parse(date_to, today)
+    # A date box happily accepts year 0001 or 9999, and converting either to
+    # UTC runs off the end of what a datetime can hold - which crashed the
+    # reports page instead of falling back the way the docstring promises.
+    start_date = min(max(start_date, EARLIEST), LATEST)
+    end_date = min(max(end_date, EARLIEST), LATEST)
     if end_date < start_date:
         start_date, end_date = end_date, start_date
     start = datetime.combine(start_date, time.min, tzinfo=TZ)

@@ -14,7 +14,7 @@ from fastapi import Depends
 
 from . import config, mailer, migrate, scheduler
 from .db import Base, SessionLocal, engine
-from .routers import (assistant, auctions, auth, awards, bidding, dashboard,
+from .routers import (assistant, attachments, auctions, auth, awards, bidding, dashboard,
                       masters, messages, notifications, reports)
 from .security import csrf_protect, current_user_optional
 from .web import render
@@ -26,6 +26,23 @@ async def lifespan(app: FastAPI):
     added = migrate.run()
     if added:
         print("Database updated with new columns:", ", ".join(added))
+    # A demonstration deployment: if the database is empty, fill it with the
+    # sample company so whoever opens the link has something to click. Real
+    # installations never set this, and it does nothing once there is data.
+    if config.DEMO_SEED:
+        from .models import User as _User
+        probe = SessionLocal()
+        try:
+            empty = probe.query(_User).count() == 0
+        finally:
+            probe.close()
+        if empty:
+            try:
+                import seed as _seed
+                _seed.build()
+                print("Demo data created. Sign in as buyer@demo.in / demo1234.")
+            except Exception as exc:            # pragma: no cover - never fatal
+                print(f"Could not create the demo data: {type(exc).__name__}: {exc}")
     # Anything left queued or failed by a previous run goes out now: the send
     # queue only lives in memory, so a restart is also the retry.
     waiting = mailer.requeue_pending()
@@ -43,7 +60,7 @@ app.mount("/static", StaticFiles(directory=str(config.BASE_DIR / "app" / "static
 #: anything that changes data it insists the request came from a page this app
 #: rendered - otherwise another site could post to it using someone's cookie.
 for router in (auth.router, dashboard.router, masters.router, auctions.router, bidding.router,
-               awards.router, messages.router, reports.router,
+               awards.router, attachments.router, messages.router, reports.router,
                notifications.router, assistant.router):
     app.include_router(router, dependencies=[Depends(csrf_protect)])
 

@@ -52,8 +52,25 @@ def _award_screen(request: Request, db: Session, user: User, auction,
             chosen = int(raw_choice) if raw_choice.isdigit() else None
             price = (form.get(f"price_{line.id}") or "").strip()
             note = (form.get(f"note_{line.id}") or "").strip()
+        # Every money column on this screen has to be on the basis the auction
+        # is actually decided on. The rows were ranked on delivered cost and
+        # then priced on the headline bid, so the table read L1, L2 with the
+        # numbers beside them going the other way, and the Saving column
+        # subtracted a headline cost from a delivered baseline - pointing the
+        # buyer at the worse deal by a wide margin.
+        priced = []
+        for bid in ranked:
+            unit = engine.compare_price(bid)
+            priced.append({
+                "bid": bid, "vendor": bid.vendor, "unit": unit,
+                "headline": bid.unit_price,
+                "adders": engine.adders_for(db, auction, bid.vendor_id),
+                "total": round(unit * line.qty, 2),
+                "saving": round(engine.line_baseline(db, line) - unit * line.qty, 2),
+            })
         rows.append({
             "line": line, "label": engine.line_label(line), "ranked": ranked,
+            "priced": priced,
             "baseline": engine.line_baseline(db, line),
             "existing": existing, "best": ranked[0] if ranked else None,
             "chosen": chosen, "price": price, "note": note,
@@ -62,7 +79,9 @@ def _award_screen(request: Request, db: Session, user: User, auction,
                       for row in rows for bid in row["ranked"]}, key=lambda pair: pair[1])
     return render(request, "award.html",
                   {"auction": auction, "rows": rows, "bidders": bidders, "error": error,
-                   "summary": engine.auction_summary(db, auction)},
+                   "summary": engine.auction_summary(db, auction),
+                   "compare_price": engine.compare_price,
+                   "adders_for": lambda vendor_id: engine.adders_for(db, auction, vendor_id)},
                   user=user, db=db, help_key="auction_detail_buyer")
 
 
@@ -120,17 +139,32 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
             else:
                 raise ActionError(f"{vendor.name} did not bid on “{label}”, so there is no price "
                                   "to award at. Type one in, or leave that item unawarded.")
-            if price <= 0:
-                raise ActionError(f"On “{label}”, the award price has to be more than zero.")
+            # Round FIRST. Checking before rounding let a sub-paisa price such
+            # as 0.004 through the "more than zero" guard and then stored it as
+            # 0.00 - booking the whole line at nothing, emailing the winner
+            # that figure, and reporting a 100% saving.
             price = round(price, 2)
+            if price <= 0:
+                raise ActionError(f"On “{label}”, the award price has to be more than zero. "
+                                  "Prices are kept to the paisa, so anything under 0.01 "
+                                  "rounds away to nothing.")
 
+            # Where the auction was compared on delivered cost, record what the
+            # awarded price works out to delivered - that is the money the
+            # business spends, and what the savings are measured against.
+            adders = engine.adders_for(db, auction, vendor.id)
+            landed_unit = adders.landed(price) if auction.compare_landed else None
             award = Award(auction_id=auction.id, line_id=line.id, vendor_id=vendor.id,
                           # Only point at the bid when the award really is at
                           # that price; otherwise the link would claim a bidder
                           # offered a figure they never typed.
                           bid_id=bid.id if (bid and round(bid.unit_price, 2) == price) else None,
                           qty=line.qty, unit_price=price,
-                          total=round(line.qty * price, 2), awarded_by_id=user.id,
+                          total=round(line.qty * price, 2),
+                          landed_unit_price=landed_unit,
+                          landed_total=(round(line.qty * landed_unit, 2)
+                                        if landed_unit is not None else None),
+                          awarded_by_id=user.id,
                           notes=(form.get(f"note_{line.id}") or "")[:500])
             db.add(award)
             created.append(award)
@@ -157,25 +191,33 @@ async def post_award(auction_id: int, request: Request, user: User = Depends(buy
         return _award_screen(request, db, user, db.get(Auction, auction_id),
                              error=str(exc), form=form)
 
-    # Winners hear what they won; everyone else hears the outcome too.
+    # Winners hear what they won; everyone else hears the outcome too. Every
+    # figure in those emails is on the basis the auction was decided on.
+    landed = bool(auction.compare_landed)
     by_vendor: dict[int, list[Award]] = {}
     for award in created:
         by_vendor.setdefault(award.vendor_id, []).append(award)
     for vendor_id, awards in by_vendor.items():
         vendor = db.get(Vendor, vendor_id)
-        rows = [(engine.line_label(a.line), fmt_qty(a.qty), fmt_money(a.unit_price))
+        rows = [(engine.line_label(a.line), fmt_qty(a.qty),
+                 fmt_money((a.landed_unit_price or a.unit_price) if landed else a.unit_price))
                 for a in awards]
-        notify.awarded(db, auction, vendor, rows, sum(a.total for a in awards))
+        notify.awarded(db, auction, vendor, rows,
+                       sum((a.landed_total or a.total) if landed else a.total for a in awards))
     for part in auction.participants:
         if part.vendor_id not in by_vendor:
             notify.not_awarded(db, auction, part.vendor)
 
     notify.award_summary(
         db, auction,
+        # The awarded value and the savings have to be on one basis. Sending
+        # the headline total beside a delivered saving made the two figures in
+        # the same sentence impossible to reconcile.
         [(engine.line_label(a.line), a.vendor.name,
-          f"{fmt_qty(a.qty)} @ {fmt_money(a.unit_price)}") for a in created],
-        total=sum(a.total for a in created), savings=summary["savings"],
-        savings_pct=summary["savings_pct"])
+          f"{fmt_qty(a.qty)} @ {fmt_money(a.landed_unit_price or a.unit_price)}"
+          if landed else f"{fmt_qty(a.qty)} @ {fmt_money(a.unit_price)}") for a in created],
+        total=sum((a.landed_total or a.total) if landed else a.total for a in created),
+        savings=summary["savings"], savings_pct=summary["savings_pct"])
 
     return redirect(f"/auctions/{auction.id}?tab=award",
                     f"Awarded to {len(by_vendor)} bidder(s). Savings of "

@@ -7,6 +7,29 @@
 {% set line_rows = pf.lines if pf else lines %}
 {% set picked = pf.vendor_ids if pf else (selected_vendors or []) %}
 {% set over = pf.overrides if pf else (overrides or {}) %}
+{% set landed_on = (pf.compare_landed if pf else (auction.compare_landed if auction else false)) %}
+
+{# One place to decide what goes in an adder box: what was typed, then what was
+   saved against this auction, then the vendor's usual figure. #}
+{% macro adder_value(vendor, field) -%}
+  {%- if pf and pf.adders.get(vendor.id) is not none -%}
+    {{ pf.adders[vendor.id].get(field, '') }}
+  {%- elif saved_adders and saved_adders.get(vendor.id) -%}
+    {{ saved_adders[vendor.id][field] or '' }}
+  {%- else -%}
+    {{ vendor['default_' ~ field] or '' }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro adder_basis(vendor, field) -%}
+  {%- if pf and pf.adders.get(vendor.id) and pf.adders[vendor.id].get(field ~ '_basis') -%}
+    {{ pf.adders[vendor.id][field ~ '_basis'] }}
+  {%- elif saved_adders and saved_adders.get(vendor.id) -%}
+    {{ saved_adders[vendor.id][field ~ '_basis'] or 'unit' }}
+  {%- else -%}
+    {{ vendor['default_' ~ field ~ '_basis'] or 'unit' }}
+  {%- endif -%}
+{%- endmacro %}
 
 {% macro flag(key, default) -%}
   {{ 'checked' if (pf[key] if pf else (auction[key] if auction else default)) }}
@@ -160,6 +183,31 @@
                value="{{ (over.get(vendor.id) or '') | replace('\n', ', ') }}"
                placeholder="Send this auction to a different address (optional)">
       </div>
+      <div class="vendor-adders {{ 'on' if landed_on }}">
+        <div class="adder-head">What it costs to get their goods here
+          {% if vendor.has_default_adders %}<span class="muted tiny">— filled in from their
+            vendor record</span>{% endif %}</div>
+        <div class="adder-row">
+          {% for field, label in adder_fields %}
+          <label>
+            <span>{{ label }}{% if field == 'other' %}
+              <input type="text" name="other_label_{{ vendor.id }}" class="adder-label"
+                     placeholder="name it"
+                     value="{{ (pf.adders[vendor.id].other_label if pf and pf.adders.get(vendor.id) else (saved_adders[vendor.id].other_label if saved_adders and saved_adders.get(vendor.id) else vendor.default_other_label)) or '' }}">
+            {% endif %}</span>
+            <span class="adder-input">
+              <input type="number" step="0.01" min="0" name="{{ field }}_{{ vendor.id }}"
+                     value="{{ adder_value(vendor, field) | trim }}" placeholder="0">
+              <select name="{{ field }}_basis_{{ vendor.id }}">
+                {% set basis = adder_basis(vendor, field) | trim %}
+                <option value="unit" {{ 'selected' if basis != 'percent' }}>{{ currency }}/unit</option>
+                <option value="percent" {{ 'selected' if basis == 'percent' }}>% of bid</option>
+              </select>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
     </div>
     {% endfor %}
     {% if not vendors %}
@@ -230,6 +278,18 @@
   <label class="check"><input type="checkbox" name="hide_bidder_names" {{ flag('hide_bidder_names', true) }}>
     <span><span class="t">Hide bidder names from each other</span>
       <span class="d">{{ FIELD_HELP.hide_bidder_names }}</span></span></label>
+
+  <h4 style="margin:18px 0 8px">How prices are compared</h4>
+  <label class="check"><input type="checkbox" name="compare_landed" id="compare_landed"
+         {{ flag('compare_landed', false) }}>
+    <span><span class="t">Compare on the delivered price</span>
+      <span class="d">{{ FIELD_HELP.compare_landed }}</span></span></label>
+  <div class="alert info small {{ '' if landed_on }}" id="landed-note"
+       style="{{ '' if landed_on else 'display:none' }}">
+    <svg><use href="#i-info"/></svg>
+    <div>Fill in each bidder's freight, duty and packaging in <b>section 3</b> above. The
+    starting price then means the most you will pay <b>delivered</b>, per unit — and each
+    bidder's screen shows them the exact price to type to take the lead.</div></div>
 
   <h4 style="margin:18px 0 8px">How it closes</h4>
   <label class="check"><input type="checkbox" name="auto_extend" {{ flag('auto_extend', true) }}>
@@ -372,6 +432,20 @@
       showProblem(problems[0][0], problems[0][1]);
     }
   });
+
+  // Show the per-bidder freight boxes only when they are going to be used.
+  var landedBox = document.getElementById("compare_landed");
+  if (landedBox) {
+    var syncLanded = function () {
+      document.querySelectorAll(".vendor-adders").forEach(function (el) {
+        el.classList.toggle("on", landedBox.checked);
+      });
+      var note = document.getElementById("landed-note");
+      if (note) note.style.display = landedBox.checked ? "" : "none";
+    };
+    landedBox.addEventListener("change", syncLanded);
+    syncLanded();
+  }
 
   var publishBtn = document.getElementById("publish-btn");
   if (publishBtn) {

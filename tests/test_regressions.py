@@ -8,10 +8,11 @@ ever fails again the same defect is back.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,6 +32,7 @@ from app.main import app                            # noqa: E402
 from app.models import (Auction, AuctionLine, AuctionStatus, Award, Bid, DecrementType,  # noqa: E402
                         EmailMessage, Item, Participant, Role, Unit, User, Vendor)
 from app.security import hash_password              # noqa: E402
+from app.utils import TZ              # noqa: E402
 
 Base.metadata.create_all(bind=db_engine)
 PW = "test1234"
@@ -633,17 +635,25 @@ def main() -> int:                                                       # noqa:
     b.post("/login", data={"email": "buyer@r.local", "password": PW}, follow_redirects=False)
 
     # ------------------------------------------------------------------ 28
-    print("\n28. Signup keeps what a supplier typed")
+    print("\n28. A supplier can no longer be turned into a buyer by signing up")
+    # The old bug: the signup form lost the account type on any error, so a
+    # supplier who mistyped their password came back as a BUYER with masters,
+    # reports and auction creation. Supplier signup is gone entirely now -
+    # suppliers arrive by invitation, so the bug has no surface left.
     s = Client(app, base_url="http://test", headers=BROWSER)
-    s.get("/signup")
+    page = s.get("/signup")
+    check("signup is closed once the first account exists",
+          "by invitation" in page.text and "account_type" not in page.text)
     r = s.post("/signup", data={"name": "Asha Rao", "email": "asha@supplier.co",
-                                "password": "abc", "account_type": "vendor",
-                                "company": "Rao Packaging Pvt Ltd"})
-    check("the supplier choice survives the error",
-          'value="vendor"\n               checked' in r.text
-          or ('value="vendor"' in r.text and "checked" in r.text.split('value="vendor"')[1][:60]),
-          "vendor still selected")
-    check("the company name survives too", "Rao Packaging Pvt Ltd" in r.text)
+                                "password": "abcdef", "account_type": "vendor",
+                                "company": "Rao Packaging Pvt Ltd"},
+               follow_redirects=False)
+    db.expire_all()
+    sneaked = db.query(User).filter_by(email="asha@supplier.co").first()
+    check("...and no account can be created through it", r.status_code == 403
+          and sneaked is None, str(r.status_code))
+    check("the page tells a supplier how they really get in",
+          "invites you to an auction" in page.text)
 
     # ------------------------------------------------------------------ 29
     print("\n29. Numbers nobody means are refused, not crashed on")
@@ -705,6 +715,484 @@ def main() -> int:                                                       # noqa:
     check("the new column was added", "migrate_probe.role" in added, ", ".join(added))
     check("its default is a value the app can read back",
           stored == Role.BUYER.name, repr(stored))
+
+    # ------------------------------------------------------------------ 32
+    print("\n32. A bidder's own bid list is newest first")
+    order = make_auction(db, buyer, vendors, item, unit, min_dec=1.0, title="Newest first")
+    order_line = order.lines[0]
+    for price in (99, 98, 97):
+        bid_as(v1, order, order_line, price)
+    page = v1.get(f"/auctions/{order.id}").text
+    mine = page.split("Your bids on this item")[1]
+    check("the bid they just placed is at the top of their own list",
+          mine.index("97.00") < mine.index("99.00"),
+          f"97 at {mine.index('97.00')}, 99 at {mine.index('99.00')}")
+
+    # ------------------------------------------------------------------ 33
+    print("\n33. A price a bidder's own freight has used up is explained as such")
+    from app.models import Participant as Part
+    landed = make_auction(db, buyer, vendors, item, unit, ceiling=12.50, min_dec=0.10,
+                          title="Freight eats the ceiling")
+    landed.compare_landed = True
+    part = db.query(Part).filter_by(auction_id=landed.id, vendor_id=vendors[0].id).first()
+    part.freight, part.freight_basis = 13.0, "unit"
+    db.commit()
+    board = " ".join(v1.get(f"/auctions/{landed.id}").text.split())
+    check("the board blames their delivered costs, not the bidding",
+          "use up the whole starting price" in board and "no price you could offer" in board)
+    check("...and does not claim there is a lowest bid when there is none",
+          "the lowest bid is" not in board.split("range-note")[1][:600])
+    refused = told(bid_as(v1, landed, landed.lines[0], 1.0))
+    check("...and the same reason comes back if they try anyway",
+          "use up the whole" in refused, " ".join(refused.split())[:80])
+
+    # ------------------------------------------------------------------ 34
+    print("\n34. A live auction's clock can be moved later, never earlier")
+    clock = make_auction(db, buyer, vendors, item, unit, minutes=30, title="Clock")
+    was_end = clock.end_at
+    earlier = b.post(f"/auctions/{clock.id}/more-time", follow_redirects=False,
+                     data={"end_at": local(was_end - timedelta(minutes=10))})
+    check("an earlier time is refused", "not later" in told(earlier))
+    db.refresh(clock)
+    check("...and nothing moved", clock.end_at == was_end)
+    later = b.post(f"/auctions/{clock.id}/more-time", follow_redirects=False,
+                   data={"end_at": local(was_end + timedelta(minutes=45))})
+    check("a later time is accepted", "now closes" in told(later))
+    db.refresh(clock)
+    check("...and the auction really closes later", clock.end_at > was_end,
+          f"{was_end} → {clock.end_at}")
+    check("...and the closing reminder will fire again", clock.ending_soon_notified is False)
+    far = b.post(f"/auctions/{clock.id}/more-time", follow_redirects=False,
+                 data={"end_at": local(datetime.utcnow() + timedelta(days=60))})
+    check("a closing time months away is refused", "Thirty days" in told(far))
+    v1_try = v1.post(f"/auctions/{clock.id}/more-time", follow_redirects=False,
+                     data={"end_at": local(was_end + timedelta(minutes=90))})
+    check("a bidder cannot move the clock", v1_try.status_code == 403,
+          str(v1_try.status_code))
+
+    # ------------------------------------------------------------------ 35
+    print("\n35. Editing a published auction says what actually changed")
+    edited = make_auction(db, buyer, vendors, item, unit, status=AuctionStatus.SCHEDULED,
+                          ceiling=100.0, qty=10.0, title="Edit me")
+    form = {
+        "title": "Edit me", "description": "", "terms": "Now 60 days credit.",
+        "start_at": local(edited.start_at), "end_at": local(edited.end_at),
+        "decrement_type": "absolute", "min_decrement": "1", "max_decrement": "0",
+        "extend_trigger_minutes": "2", "extend_by_minutes": "3", "max_extensions": "3",
+        "line_item_id": [str(item.id)], "line_unit_id": [str(unit.id)],
+        "line_qty": ["25"], "line_price": ["90"], "line_spec": [""],
+        "vendor_ids": [str(v.id) for v in vendors],
+    }
+    r = b.post(f"/auctions/{edited.id}/edit", data=form, follow_redirects=False)
+    check("the edit saves", "Changes saved" in told(r), " ".join(told(r).split())[:70])
+    db.expire_all()
+    edited = db.get(Auction, edited.id)
+    check("...and the new quantity and starting price really landed",
+          edited.lines[0].qty == 25 and edited.lines[0].starting_price == 90,
+          f"qty {edited.lines[0].qty}, price {edited.lines[0].starting_price}")
+    sent = (db.query(EmailMessage).filter(EmailMessage.event == "updated")
+              .order_by(EmailMessage.id.desc()).first())
+    body = sent.html_body if sent else ""
+    for what, needle in (("the new terms", "terms have been rewritten"),
+                         ("the new quantity", "quantity is now 25"),
+                         ("the new starting price", "starting price is now")):
+        check(f"the bidders are emailed {what}", needle in body,
+              needle if needle in body else "missing")
+
+    # ------------------------------------------------------------------ 36
+    print("\n36. Editing a draft and publishing it in one press emails the new items")
+    draft = make_auction(db, buyer, vendors, item, unit, status=AuctionStatus.DRAFT,
+                         ceiling=100.0, qty=10.0, title="Edit and publish",
+                         published=False)
+    now = datetime.utcnow()
+    r = b.post(f"/auctions/{draft.id}/edit", follow_redirects=False, data={
+        "title": "Edit and publish", "description": "", "terms": "",
+        "start_at": local(now - timedelta(minutes=1)),
+        "end_at": local(now + timedelta(hours=2)),
+        "decrement_type": "absolute", "min_decrement": "1", "max_decrement": "0",
+        "extend_trigger_minutes": "2", "extend_by_minutes": "3", "max_extensions": "3",
+        # the buyer swaps the item and halves the ceiling on the way out
+        "line_item_id": [str(spare_item.id)], "line_unit_id": [str(unit.id)],
+        "line_qty": ["40"], "line_price": ["50"], "line_spec": [""],
+        "vendor_ids": [str(v.id) for v in vendors],
+        "action": "publish"})
+    check("it publishes", "Bidding is open now" in told(r), " ".join(told(r).split())[:70])
+    invite = (db.query(EmailMessage)
+                .filter(EmailMessage.event == "invited",
+                        EmailMessage.subject.like("%Edit and publish%"))
+                .order_by(EmailMessage.id.desc()).first())
+    body = " ".join((invite.html_body if invite else "").split())
+    check("the invitation quotes the ceiling as it was saved, not as it was before",
+          "50.00" in body and "100.00" not in body,
+          "50.00 present" if "50.00" in body else "50.00 missing")
+    check("...and one item, not two", ">1<" in body or "Items" in body)
+
+    # ------------------------------------------------------------------ 37
+    print("\n37. Every tab the page draws is a tab the router knows")
+    from app.routers.auctions import TABS
+    template = (ROOT / "app" / "templates" / "auction_detail.html").read_text(encoding="utf-8")
+    drawn = set(re.findall(r"\?tab=([a-z]+)", template))
+    check("no tab link points at a name the router would throw away",
+          drawn <= set(TABS), ", ".join(sorted(drawn - set(TABS))) or "all known")
+    auction = make_auction(db, buyer, vendors, item, unit, title="Tab fallback")
+    page = b.get(f"/auctions/{auction.id}?tab=nonsense")
+    check("an unknown tab falls back to the bidding view, not a blank page",
+          page.status_code == 200 and "Tab fallback" in page.text
+          and ("No bids yet" in page.text or "unit_price" in page.text),
+          f"HTTP {page.status_code}")
+
+    # ------------------------------------------------------------------ 38
+    print("\n38. A price that rounds away to nothing cannot be awarded")
+    auction = make_auction(db, buyer, vendors, item, unit, title="Sub-paisa award")
+    line = auction.lines[0]
+    bid_as(v1, auction, line, 90)
+    auction.status = AuctionStatus.CLOSED
+    db.commit()
+    r = b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
+               data={f"winner_{line.id}": str(vendors[0].id), f"price_{line.id}": "0.004"})
+    db.expire_all()
+    booked = db.query(Award).filter(Award.line_id == line.id).first()
+    check("0.004 is refused rather than booked as 0.00", booked is None,
+          f"{booked.unit_price if booked else 'nothing booked'}")
+    check("...and the refusal explains why", "more than zero" in r.text,
+          "explained" if "more than zero" in r.text else r.text[:60])
+
+    # ------------------------------------------------------------------ 39
+    print("\n39. A tampered item id is a clean refusal, never a crash")
+    auction = make_auction(db, buyer, vendors, item, unit, title="Tampered line")
+    for raw in ("1x", "-1", "²", "9" * 20, "0", " "):
+        r = v1.post(f"/auctions/{auction.id}/bid", follow_redirects=False,
+                    data={"line_id": raw, "unit_price": "50"})
+        check(f"line_id {raw.strip()!r} is refused cleanly", r.status_code < 500,
+              f"HTTP {r.status_code}")
+
+    # ------------------------------------------------------------------ 40
+    print("\n40. A name with angle brackets does not break the PDF")
+    auction = make_auction(db, buyer, vendors, item, unit, title="Grade <b> steel")
+    line = auction.lines[0]
+    bid_as(v1, auction, line, 80)
+    auction.status = AuctionStatus.CLOSED
+    db.commit()
+    b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
+           data={f"winner_{line.id}": str(vendors[0].id), f"price_{line.id}": "80"})
+    db.expire_all()
+    r = b.get(f"/reports/auction/{auction.id}/export/pdf")
+    check("the auction PDF still builds", r.status_code == 200,
+          f"HTTP {r.status_code} {len(r.content)}b")
+    today = datetime.now(TZ).date().isoformat()
+    r = b.get(f"/reports/savings.pdf?date_from=2000-01-01&date_to={today}")
+    check("...and so does the savings PDF for the whole period", r.status_code == 200,
+          f"HTTP {r.status_code}")
+    # The escaping must keep the whole name, not quietly drop the bracketed
+    # part the way reportlab's parser did.
+    pdf = reporting.auction_pdf(reporting.auction_summary_report(db, auction))
+    check("the PDF is a real document, not an error", pdf[:4] == b"%PDF", f"{len(pdf)}b")
+    plain = b.get(f"/reports/auction/{auction.id}/export/csv").text
+    check("the CSV carries the name in full", "Grade <b> steel" in plain,
+          plain.splitlines()[0][:60] if plain else "")
+
+    # ------------------------------------------------------------------ 41
+    print("\n41. An impossible date does not take the reports page down")
+    for pair in (("0001-01-01", today), (today, "9999-12-31"), ("not-a-date", "2026-13-45")):
+        r = b.get(f"/reports?date_from={pair[0]}&date_to={pair[1]}")
+        check(f"{pair[0]} → {pair[1]} is handled", r.status_code == 200, f"HTTP {r.status_code}")
+    r = b.get(f"/reports/savings.csv?date_from=0001-01-01&date_to={today}")
+    check("...and the download too", r.status_code == 200, f"HTTP {r.status_code}")
+
+    # ------------------------------------------------------------------ 42
+    print("\n42. A report row's own figures add up")
+    auction = make_auction(db, buyer, vendors, item, unit, title="Fractional row",
+                           qty=12.5, ceiling=621.49, min_dec=0.01)
+    line = auction.lines[0]
+    bid_as(v1, auction, line, 548.18)
+    auction.status = AuctionStatus.CLOSED
+    db.commit()
+    b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
+           data={f"winner_{line.id}": str(vendors[0].id), f"price_{line.id}": "548.18"})
+    db.expire_all()
+    data = reporting.total_savings(db, datetime(2000, 1, 1), datetime(2100, 1, 1))
+    row = next((r for r in data["rows"] if r["reference"] == auction.reference), None)
+    check("the row is in the report", row is not None)
+    if row:
+        check("baseline − final is exactly the savings column",
+              abs((row["baseline"] - row["final"]) - row["savings"]) < 0.0001,
+              f"{row['baseline']:.2f} - {row['final']:.2f} vs {row['savings']:.2f}")
+    check("and the total is the sum of the printed rows",
+          abs(sum(r["savings"] for r in data["rows"]) - data["totals"]["savings"]) < 0.005)
+
+    # ------------------------------------------------------------------ 43
+    print("\n43. Savings by month uses the months the buyer sees")
+    from app.routers.dashboard import _monthly_savings
+    auction = make_auction(db, buyer, vendors, item, unit, title="Month edge")
+    line = auction.lines[0]
+    bid_as(v1, auction, line, 90)
+    auction.status = AuctionStatus.CLOSED
+    db.commit()
+    b.post(f"/auctions/{auction.id}/award", follow_redirects=False,
+           data={f"winner_{line.id}": str(vendors[0].id), f"price_{line.id}": "90"})
+    db.expire_all()
+    # Awarded at 19:45 UTC on the last day of last month = 01:15 local on the
+    # 1st of this month. The chart must agree with every date on the screen.
+    local_first = datetime.now(TZ).replace(day=1, hour=1, minute=15, second=0, microsecond=0)
+    award = db.query(Award).filter(Award.auction_id == auction.id).one()
+    award.awarded_at = auction.awarded_at = local_first.astimezone(
+        timezone.utc).replace(tzinfo=None)
+    db.commit()
+    buckets = _monthly_savings(db, months=6)
+    this_month = datetime.now(TZ).strftime("%b")
+    landed = next((x for x in buckets if x["label"] == this_month), None)
+    check("the chart has a bar for the current month", landed is not None,
+          ", ".join(x["label"] for x in buckets))
+    if landed:
+        check("...and the auction is counted in it", landed["count"] >= 1,
+              f"{landed['count']} in {this_month}")
+
+    # ------------------------------------------------------------------ 44
+    print("\n44. Email never sits at “queued” without a reason")
+    from app import mailer as _mailer
+    from app import config as _config
+    was = (_config.SMTP_HOST, _config.EMAIL_ENABLED)
+    try:
+        _config.SMTP_HOST, _config.EMAIL_ENABLED = "no-such-host.invalid", True
+        msg = _mailer.queue_email(db, to_email="nobody@example.com", subject="Probe",
+                                  html_body="<p>x</p>", event="test")
+        msg_id = msg.id
+        _mailer.flush(timeout=90)
+        db.expire_all()
+        row = db.get(EmailMessage, msg_id)
+        check("an unreachable mail server ends as failed, not queued",
+              row.status == "failed", row.status)
+        check("...and says what to change", "RA_SMTP_HOST" in row.error, row.error[:70])
+        ok, said = _mailer.send_test("someone@example.com")
+        check("the test button reports the same thing", not ok and "could not be found" in said,
+              said[:70])
+    finally:
+        _config.SMTP_HOST, _config.EMAIL_ENABLED = was
+    page = b.get("/outbox")
+    check("the Outbox says which server is in use", "Practice mode" in page.text
+          or "Sending is switched on" in page.text)
+    check("...and offers a test email", "Send test email" in page.text)
+
+    # ------------------------------------------------------------------ 45
+    print("\n45. The award screen prices the auction the way it was decided")
+    landed_auction = make_auction(db, buyer, vendors, item, unit, title="Delivered award",
+                                  qty=100, ceiling=110.0, min_dec=1.0)
+    landed_auction.compare_landed = True
+    parts = db.query(Participant).filter_by(auction_id=landed_auction.id).all()
+    parts[0].duty, parts[0].duty_basis = 20.0, "percent"   # 90 headline -> 108 delivered
+    parts[1].freight, parts[1].freight_basis = 1.0, "unit"  # 100 headline -> 101 delivered
+    db.commit()
+    lline = landed_auction.lines[0]
+    bid_as(v1, landed_auction, lline, 90)
+    bid_as(v2, landed_auction, lline, 100)
+    db.expire_all()
+    ranked = engine.best_per_vendor(db, lline.id)
+    check("the cheaper delivered price ranks first",
+          ranked and ranked[0].vendor_id == vendors[1].id,
+          ", ".join(f"{b.vendor.name} {engine.compare_price(b):.2f}" for b in ranked))
+    landed_auction.status = AuctionStatus.CLOSED
+    db.commit()
+    page = b.get(f"/auctions/{landed_auction.id}/award").text
+    check("the screen shows the delivered price, not just the headline",
+          "108.00" in page and "101.00" in page,
+          "delivered prices present" if "108.00" in page else "missing")
+    # The saving beside L1 must be the saving actually booked by picking it.
+    delivered_saving = 100 * 110.0 - 100 * 101.0
+    check("the saving beside the best bidder is the one they would really make",
+          f"{delivered_saving:,.2f}" in page, f"{delivered_saving:,.2f}")
+    wrong = 100 * 110.0 - 100 * 90.0     # the headline sum the screen used to print
+    check("...and the old headline figure is gone", f"{wrong:,.2f}" not in page,
+          f"{wrong:,.2f} still shown" if f"{wrong:,.2f}" in page else "gone")
+    r = b.post(f"/auctions/{landed_auction.id}/award", follow_redirects=False,
+               data={f"winner_{lline.id}": str(vendors[1].id), f"price_{lline.id}": "100"})
+    db.expire_all()
+    booked = db.query(Award).filter(Award.line_id == lline.id).one()
+    summary = engine.auction_summary(db, landed_auction)
+    check("the award books the delivered total",
+          abs((booked.landed_total or booked.total) - 100 * 101.0) < 0.01,
+          f"{booked.landed_total or booked.total:.2f}")
+    check("...and the confirmation quotes the delivered saving",
+          abs(summary["savings"] - delivered_saving) < 0.01, f"{summary['savings']:.2f}")
+    per_line = sum(engine.line_result(db, l)["savings"] for l in landed_auction.lines)
+    check("...which is what the line adds up to", abs(per_line - summary["savings"]) < 0.01,
+          f"{per_line:.2f}")
+
+    # ------------------------------------------------------------------ 46
+    print("\n46. A percentage adder cannot push a bid past the maximum decrement")
+    cap = make_auction(db, buyer, vendors, item, unit, title="Decrement cap",
+                       ceiling=200.0, min_dec=1.0, max_dec=10.0)
+    cap.compare_landed = True
+    part = db.query(Participant).filter_by(auction_id=cap.id, vendor_id=vendors[0].id).one()
+    part.duty, part.duty_basis = 10.0, "percent"
+    db.commit()
+    cline = cap.lines[0]
+    # 172.72 would deliver at 189.99 - a paisa past the cap, which is exactly
+    # what the old flooring allowed. The engine now asks for 172.73.
+    refused = bid_as(v1, cap, cline, 172.72)
+    db.expire_all()
+    check("a price a paisa past the cap is refused", engine.best_bid(db, cline.id) is None,
+          told(refused)[:70] if engine.best_bid(db, cline.id) is None else "it was accepted")
+    bid_as(v1, cap, cline, 172.73)                 # delivered 190.00
+    db.expire_all()
+    before = engine.compare_price(engine.best_bid(db, cline.id))
+    # The window this particular bidder is shown, adders and all.
+    window = engine.bid_window(db, cap, cline, vendors[1].id)
+    part2 = db.query(Participant).filter_by(auction_id=cap.id, vendor_id=vendors[1].id).one()
+    part2.duty, part2.duty_basis = 10.0, "percent"
+    db.commit()
+    db.expire_all()
+    window = engine.bid_window(db, cap, cline, vendors[1].id)
+    adders = engine.adders_for(db, cap, vendors[1].id)
+    floor_price = adders.landed(window.min_allowed)
+    cap_floor = round(before - cap.max_decrement, 2)
+    check("the lowest price the engine offers delivers at or above the floor",
+          floor_price >= cap_floor - 0.0001,
+          f"offers {window.min_allowed} = delivered {floor_price:.2f}, floor {cap_floor:.2f}")
+    check("...and is not needlessly more than a paisa above it",
+          floor_price - cap_floor < 0.011, f"{floor_price - cap_floor:.4f} above")
+    r = bid_as(v2, cap, cline, window.min_allowed)
+    db.expire_all()
+    best = engine.best_bid(db, cline.id)
+    after = engine.compare_price(best)
+    check("a bid at that floor is accepted", best.vendor_id == vendors[1].id,
+          told(r)[:70])
+    check("...and does not overshoot the cap",
+          before - after <= cap.max_decrement + 0.0001,
+          f"dropped {before - after:.2f} against a cap of {cap.max_decrement:.2f}")
+    # And a paisa below the floor is still refused.
+    r = bid_as(v1, cap, cline, round(window.min_allowed - 0.01, 2))
+    db.expire_all()
+    check("a paisa below the floor is refused", engine.best_bid(db, cline.id).id == best.id,
+          told(r)[:60])
+
+    # ------------------------------------------------------------------ 47
+    print("\n47. Only one account can ever be the first")
+    import threading as _threading
+    from app.db import SessionLocal as _Session
+    probe = _Session()
+    existing = probe.query(User).count()
+    probe.close()
+    check("this install already has accounts, so sign-up is shut", existing > 0, str(existing))
+    fresh = Client(app, base_url="http://test")
+    fresh.headers.update(BROWSER)
+    fresh.get("/signup")
+    r = fresh.post("/signup", follow_redirects=False,
+                   data={"name": "Interloper", "email": "nope@r.local",
+                         "password": "abcdef123", "company": ""})
+    db.expire_all()
+    check("a second sign-up is refused", r.status_code == 403, f"HTTP {r.status_code}")
+    check("...and no account was made",
+          db.query(User).filter(User.email == "nope@r.local").first() is None)
+
+    # ------------------------------------------------------------------ 48
+    print("\n48. The sign-in throttle cannot be sidestepped with a header")
+    from app.web import client_ip as _client_ip
+    from app import config as _config
+
+    class _Req:
+        def __init__(self, header, peer):
+            self.headers = {"x-forwarded-for": header} if header else {}
+            self.client = type("C", (), {"host": peer})()
+
+    was = _config.TRUSTED_PROXIES
+    try:
+        _config.TRUSTED_PROXIES = 0
+        check("with no proxy configured, a forwarded header is ignored",
+              _client_ip(_Req("1.2.3.4", "10.0.0.9")) == "10.0.0.9",
+              _client_ip(_Req("1.2.3.4", "10.0.0.9")))
+        _config.TRUSTED_PROXIES = 1
+        check("behind one proxy, the entry the proxy wrote is used",
+              _client_ip(_Req("1.2.3.4, 203.0.113.7", "10.0.0.9")) == "203.0.113.7",
+              _client_ip(_Req("1.2.3.4, 203.0.113.7", "10.0.0.9")))
+    finally:
+        _config.TRUSTED_PROXIES = was
+    attacker = Client(app, base_url="http://test")
+    attacker.headers.update(BROWSER)
+    attacker.get("/login")
+    blocked = 0
+    for n in range(14):
+        rr = attacker.post("/login", follow_redirects=False,
+                           headers={"X-Forwarded-For": f"9.9.9.{n}"},
+                           data={"email": "buyer@r.local", "password": f"wrong{n}", "next": "/"})
+        if "Too many sign-in attempts" in rr.text:
+            blocked += 1
+    check("guessing is slowed down however the header is set", blocked > 0,
+          f"{blocked} of 14 refused")
+    from app.security import clear_failed_logins as _clear
+    _clear("account|buyer@r.local")
+
+    # ------------------------------------------------------------------ 49
+    print("\n49. What the screens say, read as a person reads them")
+    from app.utils import first_name, plain_money
+    check("a name written initial-first is greeted by the name, not the initial",
+          first_name("R Venkatesh") == "Venkatesh", first_name("R Venkatesh"))
+    check("...and an ordinary name still works", first_name("Harish Subramaniam") == "Harish")
+    check("...and a name that is all initials is left alone", first_name("R K") == "R K")
+    check("...and an empty one does not crash", first_name(None) == "there")
+    check("a price in a number box has no trailing .0", plain_money(60700.0) == "60700",
+          plain_money(60700.0))
+
+    # The welcome screen printed a Python repr where a count belonged.
+    fresh_buyer = login("buyer@r.local")
+    page = fresh_buyer.get("/onboarding").text
+    check("the welcome screen has no Python repr on it",
+          "built-in method" not in page and "object at 0x" not in page)
+
+    # A bidder who is already L1 must not be invited to undercut themselves.
+    lead = make_auction(db, buyer, vendors, item, unit, title="Already winning",
+                        ceiling=1000.0, min_dec=10)
+    lline = lead.lines[0]
+    bid_as(v1, lead, lline, 900)
+    db.expire_all()
+    page = v1.get(f"/auctions/{lead.id}").text
+    check("the leader is told there is nothing to beat", "Nothing to beat" in page)
+    check("...and is not handed a one-click price to undercut themselves",
+          'data-fill="' not in page.split("Nothing to beat")[1][:1200],
+          "a chip is still offered" if 'data-fill="' in page.split("Nothing to beat")[1][:1200]
+          else "no chip")
+    rival_page = v2.get(f"/auctions/{lead.id}").text
+    check("...while a bidder who is behind still gets one", 'data-fill="' in rival_page)
+
+    # Overall standing must not flatter a bidder who skipped an item.
+    two = make_auction(db, buyer, vendors, item, unit, title="Partial bidder", ceiling=1000.0,
+                       qty=10, min_dec=1)
+    db.add(AuctionLine(auction_id=two.id, item_id=spare_item.id, unit_id=unit.id,
+                       qty=10, starting_price=100.0))
+    db.commit()
+    db.refresh(two)
+    big, small = sorted(two.lines, key=lambda l: -(l.starting_price or 0))
+    bid_as(v1, two, big, 900)
+    bid_as(v1, two, small, 90)
+    bid_as(v2, two, small, 80)          # v2 skips the expensive line entirely
+    db.expire_all()
+    standing = {r["vendor_id"]: r for r in engine.overall_ranking(db, two)}
+    full, partial = standing[vendors[0].id], standing[vendors[1].id]
+    check("the bidder who priced everything ranks first", full["complete"] and not partial["complete"])
+    check("a partial bidder's saving is measured on what they priced",
+          abs(partial["savings"] - (10 * 100 - 10 * 80)) < 0.01, f"{partial['savings']:.2f}")
+    check("...and is not larger than the complete bidder's",
+          partial["savings"] < full["savings"],
+          f"partial {partial['savings']:.2f} vs full {full['savings']:.2f}")
+
+    # A finished auction's bids are not labelled "live".
+    done = make_auction(db, buyer, vendors, item, unit, title="Finished labels")
+    dline = done.lines[0]
+    bid_as(v1, done, dline, 90)
+    done.status = AuctionStatus.CLOSED
+    db.commit()
+    b.post(f"/auctions/{done.id}/award", follow_redirects=False,
+           data={f"winner_{dline.id}": str(vendors[0].id), f"price_{dline.id}": "90"})
+    db.expire_all()
+    page = b.get(f"/reports/auction/{done.id}").text
+    check("a bid on a finished auction is not called “live”",
+          ">live<" not in page and "counted" in page)
+    # And the bidder is told the outcome on the tab they land on.
+    page = v1.get(f"/auctions/{done.id}").text
+    check("the winner is told they won, on the first tab they see",
+          "You won this item" in page)
+    page = v2.get(f"/auctions/{done.id}").text
+    check("...and a bidder who did not win is told that too",
+          "Went to another bidder" in page or "Not awarded" in page)
 
     db.close()
     print("\n" + "-" * 62)

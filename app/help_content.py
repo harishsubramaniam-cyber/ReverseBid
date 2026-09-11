@@ -44,6 +44,13 @@ FIELD_HELP = {
     "unit_code": "A short unit like KG, NOS, MTR, LTR.",
     "bid_price": "Your price per unit. Lower wins — you can bid again as many times as you like.",
     "award_price": "The price you are awarding at. It defaults to the bidder's winning price.",
+    "compare_landed": "Add each bidder's own freight, duty and packaging to what they bid, and "
+                      "rank them on the delivered price. Use it when one supplier is next door "
+                      "and another is three states away.",
+    "adders": "What it costs to get this bidder's goods to your door, on top of their price. "
+              "Per unit for freight and packaging; a percentage for duty and insurance.",
+    "documents": "Drawings, specifications, terms — whatever a supplier needs to price it "
+                 "properly. Every invited bidder can download these.",
 }
 
 # --------------------------------------------------------------------- pages
@@ -95,8 +102,14 @@ PAGE_HELP = {
              "already passed, bidding starts there and then; otherwise it opens at the time you "
              "set, and you can still press “Start bidding now” to bring it forward."),
             ("Can I still change things?",
-             "Before it starts, yes — dates, prices, invited vendors. Once bidding is live, only "
-             "cancelling is possible, and everyone is told why."),
+             "Before it starts, yes — dates, prices, invited vendors, and every bidder is "
+             "emailed exactly what changed. Once bidding is live the terms are fixed, but you "
+             "can still give bidders more time, close bidding early, or cancel; whichever you "
+             "choose, everyone is told."),
+            ("A bidder has asked for longer. Can I give it to them?",
+             "Yes — “Give bidders more time” moves the closing time later and emails the new "
+             "time to everyone. It only ever moves outwards: to finish sooner, use “Close "
+             "bidding now” instead, which is immediate and equally visible to everybody."),
             ("What is auto-extension?",
              "If a bid arrives in the final moments, the clock is pushed back so others can respond. "
              "It stops last-second sniping."),
@@ -224,6 +237,25 @@ ANSWERS = [
      "Vendors need only a name and an email; items need a name; units need a short code like KG. "
      "You can add all three without leaving the auction form — look for the **+ New** link next "
      "to each picker."),
+    (["delivered", "landed", "freight", "duty", "packaging", "transport", "ex works",
+      "door delivered", "like for like"],
+     "Tick **Compare on the delivered price** when you create the auction, then fill in each "
+     "bidder's freight, duty and packaging under their name. The app adds those to whatever "
+     "they bid and ranks everyone on the delivered figure, so a nearby supplier and a distant "
+     "one are compared fairly. Bidders still type their own ex-works price — their screen tells "
+     "them exactly what to type to take the lead. The starting price then means the most you "
+     "will pay delivered, per unit."),
+    (["document", "attachment", "drawing", "specification", "spec sheet", "upload", "file",
+      "attach", "pdf"],
+     "Open an auction and use the **Documents** tab. Anything you attach there can be "
+     "downloaded by every invited bidder — attach it to one item if it is a drawing for that "
+     "item only. Bidders can attach their own paperwork too, and only you can see theirs."),
+    (["sign up", "signup", "register", "new supplier", "supplier login", "invite", "password",
+      "join", "cannot log in", "can't log in"],
+     "Suppliers do not sign up. You add the vendor with a name and an email, and when you "
+     "publish the auction their invitation email carries a link that sets their own password — "
+     "that link is how they get in. To add a colleague on your own side, use **Team** in the "
+     "top bar. The only account created by signing up is the very first one."),
     (["mobile", "phone", "app"],
      "The whole platform works in a phone browser — bidding, alerts, messages and reports. There "
      "is nothing to install."),
